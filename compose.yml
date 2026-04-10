@@ -21,22 +21,9 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
-    command:
-      - python
-      - -m
-      - archidekt_commander_mcp.server
-      - --transport
-      - streamable-http
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-      - --redis-url
-      - redis://redis:6379/0
-      - --cache-ttl-seconds
-      - "86400"
-      - --user-agent
-      - archidekt-mcp-server/0.3 (+mailto:replace-me@example.com)
+    environment:
+      ARCHIDEKT_MCP_REDIS_URL: redis://redis:6379/0
+      ARCHIDEKT_MCP_USER_AGENT: archidekt-mcp-server/0.3 (+mailto:replace-me@example.com)
     healthcheck:
       test:
         - CMD

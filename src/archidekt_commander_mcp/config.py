@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, computed_field, field_validator
+from pydantic import Field, computed_field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 TransportMode = Literal["stdio", "sse", "streamable-http"]
 
 
-class RuntimeSettings(BaseModel):
+class RuntimeSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="ARCHIDEKT_MCP_",
+        extra="ignore",
+    )
+
     archidekt_base_url: str = "https://archidekt.com"
     scryfall_base_url: str = "https://api.scryfall.com"
     cache_ttl_seconds: int = Field(default=86400, ge=30, le=86400)

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import os
 import unittest
+from unittest.mock import patch
 
 from pydantic import ValidationError
 from starlette.testclient import TestClient
@@ -42,6 +44,26 @@ class HttpRouteTests(unittest.TestCase):
         response = client.post("/api/overview", json={})
         self.assertEqual(response.status_code, 422)
         self.assertIn("error", response.json())
+
+
+class RuntimeSettingsEnvTests(unittest.TestCase):
+    def test_reads_runtime_settings_from_environment(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "ARCHIDEKT_MCP_HOST": "127.0.0.1",
+                "ARCHIDEKT_MCP_PORT": "9000",
+                "ARCHIDEKT_MCP_REDIS_URL": "redis://redis:6379/5",
+                "ARCHIDEKT_MCP_CACHE_TTL_SECONDS": "1234",
+            },
+            clear=False,
+        ):
+            settings = RuntimeSettings()
+
+        self.assertEqual(settings.host, "127.0.0.1")
+        self.assertEqual(settings.port, 9000)
+        self.assertEqual(settings.redis_url, "redis://redis:6379/5")
+        self.assertEqual(settings.cache_ttl_seconds, 1234)
 
 
 class FakeCollectionClient:

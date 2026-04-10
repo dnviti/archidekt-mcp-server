@@ -502,62 +502,72 @@ mcp = app
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
+    env_settings = RuntimeSettings()
     parser = argparse.ArgumentParser(description="Archidekt Commander MCP server")
     parser.add_argument(
         "--transport",
         choices=["stdio", "sse", "streamable-http"],
-        default="streamable-http",
+        default=env_settings.transport,
         help="MCP transport to use. Default: streamable-http.",
     )
-    parser.add_argument("--host", default="0.0.0.0", help="Bind host for the Web UI / HTTP MCP server.")
-    parser.add_argument("--port", type=int, default=8000, help="Bind port for the Web UI / HTTP MCP server.")
+    parser.add_argument(
+        "--host",
+        default=env_settings.host,
+        help="Bind host for the Web UI / HTTP MCP server.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=env_settings.port,
+        help="Bind port for the Web UI / HTTP MCP server.",
+    )
     parser.add_argument(
         "--log-level",
-        default="INFO",
+        default=env_settings.log_level,
         help="Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL.",
     )
     parser.add_argument(
         "--cache-ttl-seconds",
         type=int,
-        default=86400,
+        default=env_settings.cache_ttl_seconds,
         help="Redis TTL in seconds for collection snapshots.",
     )
     parser.add_argument(
         "--redis-url",
-        default=RuntimeSettings().redis_url,
+        default=env_settings.redis_url,
         help="Redis connection URL for the shared collection cache.",
     )
     parser.add_argument(
         "--redis-key-prefix",
-        default=RuntimeSettings().redis_key_prefix,
+        default=env_settings.redis_key_prefix,
         help="Prefix used for Redis keys created by this server.",
     )
     parser.add_argument(
         "--http-timeout-seconds",
         type=float,
-        default=30.0,
+        default=env_settings.http_timeout_seconds,
         help="HTTP timeout for Archidekt and Scryfall requests.",
     )
     parser.add_argument(
         "--max-search-results",
         type=int,
-        default=50,
+        default=env_settings.max_search_results,
         help="Maximum number of results returned per search page.",
     )
     parser.add_argument(
         "--scryfall-max-pages",
         type=int,
-        default=6,
+        default=env_settings.scryfall_max_pages,
         help="Maximum number of Scryfall pages scanned for unowned searches.",
     )
     parser.add_argument(
         "--user-agent",
-        default="archidekt-commander-mcp/0.2 (+mailto:replace-me@example.com)",
+        default=env_settings.user_agent,
         help="User-Agent sent to Archidekt and Scryfall.",
     )
     parser.add_argument(
         "--streamable-http-path",
-        default="/mcp",
+        default=env_settings.streamable_http_path,
         help="HTTP path used by the streamable-http MCP transport.",
     )
     return parser

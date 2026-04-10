@@ -101,13 +101,12 @@ Run a local Redis instance before starting the server.
 Start the server directly:
 
 ```powershell
-.venv\Scripts\python.exe -m archidekt_commander_mcp.server `
-  --transport streamable-http `
-  --host 127.0.0.1 `
-  --port 8000 `
-  --redis-url redis://127.0.0.1:6379/0 `
-  --cache-ttl-seconds 86400 `
-  --user-agent "archidekt-mcp-server/0.3 (+mailto:you@example.com)"
+$env:ARCHIDEKT_MCP_HOST = "127.0.0.1"
+$env:ARCHIDEKT_MCP_PORT = "8000"
+$env:ARCHIDEKT_MCP_REDIS_URL = "redis://127.0.0.1:6379/0"
+$env:ARCHIDEKT_MCP_CACHE_TTL_SECONDS = "86400"
+$env:ARCHIDEKT_MCP_USER_AGENT = "archidekt-mcp-server/0.3 (+mailto:you@example.com)"
+.venv\Scripts\python.exe -m archidekt_commander_mcp.server
 ```
 
 Then open:
@@ -173,6 +172,12 @@ With the stack running:
 
 The Redis service is configured with append-only persistence and a named volume.
 
+The app service uses environment variables instead of a long command override:
+
+- `ARCHIDEKT_MCP_REDIS_URL`
+- `ARCHIDEKT_MCP_USER_AGENT`
+- plus image defaults for host, port, transport, and cache TTL
+
 ## GitHub Actions
 
 The workflow in `.github/workflows/docker.yml` does two things:
@@ -216,6 +221,15 @@ Because the server is stateless, the model must pass `collection` on every call.
 - `--scryfall-max-pages`
 - `--user-agent`
 - `--streamable-http-path`
+
+The same runtime options can also be provided as environment variables with the `ARCHIDEKT_MCP_` prefix, for example:
+
+- `ARCHIDEKT_MCP_TRANSPORT`
+- `ARCHIDEKT_MCP_HOST`
+- `ARCHIDEKT_MCP_PORT`
+- `ARCHIDEKT_MCP_REDIS_URL`
+- `ARCHIDEKT_MCP_CACHE_TTL_SECONDS`
+- `ARCHIDEKT_MCP_USER_AGENT`
 
 ## Notes
 

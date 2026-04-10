@@ -9,6 +9,10 @@ on:
       - main
   workflow_dispatch:
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -35,6 +39,7 @@ jobs:
     needs: test
     permissions:
       contents: read
+      packages: write
 
     steps:
       - name: Check out repository
@@ -42,6 +47,28 @@ jobs:
 
       - name: Validate compose file
         run: docker compose config
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=ref,event=branch
+          labels: |
+            org.opencontainers.image.title=archidekt-mcp-server
+            org.opencontainers.image.description=Stateless MCP server with Redis cache and Web UI for Archidekt Commander deckbuilding
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -51,8 +78,9 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          push: false
+          push: ${{ github.event_name != 'pull_request' }}
           load: false
-          tags: archidekt-mcp-server:ci
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

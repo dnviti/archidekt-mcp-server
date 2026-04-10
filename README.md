@@ -178,13 +178,17 @@ The Redis service is configured with append-only persistence and a named volume.
 The workflow in `.github/workflows/docker.yml` does two things:
 
 1. Installs the project and runs the Python unit tests.
-2. Validates `compose.yml` and builds the Docker image with Buildx.
+2. Validates `compose.yml`, builds the Docker image with Buildx, and pushes it to GHCR on `main`.
 
 It runs on:
 
 - pushes to `main`
 - pull requests targeting `main`
 - manual dispatch
+
+Published image:
+
+- `ghcr.io/dnviti/archidekt-mcp-server:latest`
 
 ## MCP Client Configuration
 

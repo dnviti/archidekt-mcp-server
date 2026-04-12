@@ -13,11 +13,13 @@ from typing import Any, Awaitable, Callable, TypeVar
 
 import httpx
 import redis.asyncio as redis_async
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ValidationError
 from redis.exceptions import RedisError
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 if __package__ in {None, ""}:
     import sys
@@ -78,6 +80,12 @@ if __package__ in {None, ""}:
         PersonalDeckUpdateRequest,
         SearchResponse,
     )
+    from archidekt_commander_mcp.mcp_auth import (
+        AUTH_SCOPE,
+        RedisArchidektOAuthProvider,
+        account_from_access_token,
+        render_archidekt_authorize_page,
+    )
     from archidekt_commander_mcp.webui import render_home_page
 else:
     from .clients import (
@@ -132,6 +140,12 @@ else:
         PersonalDeckUpdateRequest,
         SearchResponse,
     )
+    from .mcp_auth import (
+        AUTH_SCOPE,
+        RedisArchidektOAuthProvider,
+        account_from_access_token,
+        render_archidekt_authorize_page,
+    )
     from .webui import render_home_page
 
 
@@ -149,12 +163,15 @@ Optional collection fields:
 Optional authenticated account fields for private data:
 - `account.token`
 - or `account.username` / `account.email` plus `account.password`
+- If this MCP server is connected through MCP OAuth, private tools may omit `account` and reuse the
+  Archidekt identity already attached to the MCP auth session.
 
 Stateless rules:
 - Never assume the server remembers a previous user's collection.
 - Reuse the `collection` object in every collection-related call for the same user request.
 - If you need private decks or a private collection, first call `login_archidekt` and then reuse the
-  returned `account` object in later tool calls.
+  returned `account` object in later tool calls. `login_archidekt` also returns the current personal
+  deck list so the model immediately knows which decks already exist on the account.
 - If you need Archidekt `card_id` values for deck or collection writes, call `search_archidekt_cards`
   first, or reuse `archidekt_card_ids` returned by `search_owned_cards`.
 - If the user asks about owned cards, use `search_owned_cards`.
@@ -232,6 +249,10 @@ def describe_account(account: ArchidektAccount | AuthenticatedAccount | None) ->
             return f"user_id={account.user_id}"
         return "token-provided"
     return account.display_identity
+
+
+def account_from_auth_context() -> AuthenticatedAccount | None:
+    return account_from_access_token(get_access_token())
 
 
 @dataclass(slots=True)
@@ -506,22 +527,47 @@ class DeckbuildingService:
             )
             return snapshot
 
-    async def login_archidekt(self, account: ArchidektAccount) -> ArchidektLoginResponse:
-        resolved_account = await self.auth_client.login(account)
+    async def login_archidekt(self, account: ArchidektAccount | None = None) -> ArchidektLoginResponse:
+        resolved_account = await self._coerce_account(account)
+        if resolved_account.user_id is None or resolved_account.username is None:
+            resolved_account, decks = await self.auth_client.list_personal_decks(resolved_account)
+        else:
+            _, decks = await self.auth_client.list_personal_decks(resolved_account)
+
         if resolved_account.user_id is None:
-            raise RuntimeError("Archidekt login succeeded but did not return a user id.")
+            raise RuntimeError("Archidekt authentication succeeded but did not resolve a user id.")
+
+        personal_decks: PersonalDecksResponse | None = None
+        notes = [
+            "Reuse the returned `account` object in later authenticated tool calls so you do not have to resend the password.",
+            "The returned `collection.collection_id` is inferred from Archidekt's current frontend, which links My Collection to `/collection/v2/{user_id}/`.",
+        ]
+        personal_decks = self._build_personal_decks_response(resolved_account, decks)
+        notes.append(
+            "The login response includes the current personal deck list so the model can reason about existing decks before proposing or creating another one."
+        )
+        if account is None:
+            notes.append(
+                "This login was resolved from the current MCP auth session instead of requiring credentials in the tool payload."
+            )
 
         return ArchidektLoginResponse(
             account=resolved_account,
             collection=CollectionLocator(collection_id=resolved_account.user_id),
-            notes=[
-                "Reuse the returned `account` object in later authenticated tool calls so you do not have to resend the password.",
-                "The returned `collection.collection_id` is inferred from Archidekt's current frontend, which links My Collection to `/collection/v2/{user_id}/`.",
-            ],
+            notes=notes,
+            personal_decks=personal_decks,
         )
 
-    async def list_personal_decks(self, account: ArchidektAccount) -> PersonalDecksResponse:
-        resolved_account, decks = await self.auth_client.list_personal_decks(account)
+    async def list_personal_decks(self, account: ArchidektAccount | None = None) -> PersonalDecksResponse:
+        resolved_account = await self._coerce_account(account)
+        resolved_account, decks = await self.auth_client.list_personal_decks(resolved_account)
+        return self._build_personal_decks_response(resolved_account, decks)
+
+    def _build_personal_decks_response(
+        self,
+        resolved_account: AuthenticatedAccount,
+        decks: list[PersonalDeckSummary],
+    ) -> PersonalDecksResponse:
         owner_username = resolved_account.username or (decks[0].owner_username if decks else None)
         private_count = sum(1 for deck in decks if deck.private)
         unlisted_count = sum(1 for deck in decks if deck.unlisted)
@@ -563,9 +609,9 @@ class DeckbuildingService:
 
     async def get_personal_deck_cards(
         self,
-        account: ArchidektAccount,
         deck_id: int,
         include_deleted: bool = False,
+        account: ArchidektAccount | None = None,
     ) -> PersonalDeckCardsResponse:
         resolved_account = await self._coerce_account(account)
         payload = await self.auth_client.fetch_deck_cards(
@@ -593,8 +639,8 @@ class DeckbuildingService:
 
     async def create_personal_deck(
         self,
-        account: ArchidektAccount,
         deck: PersonalDeckCreateInput,
+        account: ArchidektAccount | None = None,
     ) -> PersonalDeckMutationResponse:
         resolved_account = await self._coerce_account(account)
         payload, summary = await self.auth_client.create_deck(resolved_account, deck)
@@ -618,9 +664,9 @@ class DeckbuildingService:
 
     async def update_personal_deck(
         self,
-        account: ArchidektAccount,
         deck_id: int,
         deck: PersonalDeckUpdateInput,
+        account: ArchidektAccount | None = None,
     ) -> PersonalDeckMutationResponse:
         resolved_account = await self._coerce_account(account)
         payload, summary = await self.auth_client.update_deck(resolved_account, deck_id, deck)
@@ -638,8 +684,8 @@ class DeckbuildingService:
 
     async def delete_personal_deck(
         self,
-        account: ArchidektAccount,
         deck_id: int,
+        account: ArchidektAccount | None = None,
     ) -> PersonalDeckMutationResponse:
         resolved_account = await self._coerce_account(account)
         await self.auth_client.delete_deck(resolved_account, deck_id)
@@ -656,9 +702,9 @@ class DeckbuildingService:
 
     async def modify_personal_deck_cards(
         self,
-        account: ArchidektAccount,
         deck_id: int,
         cards: list[PersonalDeckCardMutation],
+        account: ArchidektAccount | None = None,
     ) -> PersonalDeckMutationResponse:
         resolved_account = await self._coerce_account(account)
         payload = await self.auth_client.modify_deck_cards(resolved_account, deck_id, cards)
@@ -678,8 +724,8 @@ class DeckbuildingService:
 
     async def upsert_collection_entries(
         self,
-        account: ArchidektAccount,
         entries: list[CollectionCardUpsert],
+        account: ArchidektAccount | None = None,
     ) -> CollectionMutationResponse:
         resolved_account = await self._coerce_account(account)
         results = []
@@ -827,16 +873,25 @@ class DeckbuildingService:
 
     async def _resolve_optional_account(
         self,
-        account: ArchidektAccount | None,
+        account: AuthenticatedAccount | ArchidektAccount | None,
     ) -> AuthenticatedAccount | None:
         if account is None:
-            return None
+            return account_from_auth_context()
+        if isinstance(account, AuthenticatedAccount):
+            return account
         return await self.auth_client.resolve_account(account)
 
     async def _coerce_account(
         self,
-        account: AuthenticatedAccount | ArchidektAccount,
+        account: AuthenticatedAccount | ArchidektAccount | None,
     ) -> AuthenticatedAccount:
+        if account is None:
+            context_account = account_from_auth_context()
+            if context_account is None:
+                raise RuntimeError(
+                    "Authenticated Archidekt access requires either an `account` payload or an MCP-authenticated session."
+                )
+            return context_account
         if isinstance(account, AuthenticatedAccount):
             return account
         return await self.auth_client.resolve_account(account)
@@ -1090,6 +1145,34 @@ class DeckbuildingService:
 def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
     runtime = runtime_settings or RuntimeSettings()
     service_state: dict[str, DeckbuildingService | None] = {"service": None}
+    auth_redis_client = None
+    auth_provider = None
+    auth_settings = None
+
+    if runtime.auth_enabled:
+        if runtime.normalized_public_base_url is None:
+            raise ValueError("`public_base_url` is required when MCP auth is enabled.")
+        auth_redis_client = redis_async.from_url(runtime.redis_url, decode_responses=True)
+        auth_provider = RedisArchidektOAuthProvider(
+            auth_redis_client,
+            key_prefix=runtime.redis_key_prefix,
+            issuer_url=runtime.normalized_public_base_url,
+            auth_code_ttl_seconds=runtime.auth_code_ttl_seconds,
+            access_token_ttl_seconds=runtime.auth_access_token_ttl_seconds,
+            refresh_token_ttl_seconds=runtime.auth_refresh_token_ttl_seconds,
+        )
+        auth_settings = AuthSettings(
+            issuer_url=runtime.normalized_public_base_url,
+            resource_server_url=f"{runtime.normalized_public_base_url}{runtime.streamable_http_path}",
+            service_documentation_url=runtime.normalized_public_base_url,
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True,
+                valid_scopes=[AUTH_SCOPE],
+                default_scopes=[AUTH_SCOPE],
+            ),
+            revocation_options=RevocationOptions(enabled=True),
+            required_scopes=[AUTH_SCOPE],
+        )
 
     def build_service() -> DeckbuildingService:
         return DeckbuildingService(runtime)
@@ -1108,6 +1191,12 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         try:
             yield
         finally:
+            active_service = service_state.get("service")
+            if active_service is not None:
+                await active_service.aclose()
+                service_state["service"] = None
+            if auth_redis_client is not None:
+                await auth_redis_client.aclose()
             LOGGER.info("Shutting down Archidekt Commander MCP server")
 
     server = FastMCP(
@@ -1121,6 +1210,8 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         streamable_http_path=runtime.streamable_http_path,
         stateless_http=runtime.stateless_http,
         lifespan=lifespan,
+        auth=auth_settings,
+        auth_server_provider=auth_provider,
     )
 
     async def get_service() -> DeckbuildingService:
@@ -1152,8 +1243,87 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
                 "stateless_http": runtime.stateless_http,
                 "cache_backend": "redis",
                 "private_cache_backend": "redis+memory-fallback",
+                "mcp_auth_enabled": runtime.auth_enabled,
             }
         )
+
+    if auth_provider is not None:
+        @server.custom_route("/auth/archidekt-login", methods=["GET", "POST"])
+        async def auth_archidekt_login(request: Request) -> Response:
+            if request.method == "GET":
+                request_id = _compact_optional_text(request.query_params.get("request_id"))
+                if request_id is None:
+                    return HTMLResponse(
+                        render_archidekt_authorize_page(
+                            request_id="",
+                            error_message="The MCP authorization request is missing a request id.",
+                        ),
+                        status_code=400,
+                    )
+                pending = await auth_provider.get_pending_request(request_id)
+                if pending is None:
+                    return HTMLResponse(
+                        render_archidekt_authorize_page(
+                            request_id=request_id,
+                            error_message="This MCP authorization request is missing or has expired. Start the app connection again from ChatGPT.",
+                        ),
+                        status_code=400,
+                    )
+                return HTMLResponse(render_archidekt_authorize_page(request_id=request_id))
+
+            form = await request.form()
+            request_id = _compact_optional_text(form.get("request_id"))
+            identifier = _compact_optional_text(form.get("identifier"))
+            password = _compact_optional_text(form.get("password"))
+            if request_id is None:
+                return HTMLResponse(
+                    render_archidekt_authorize_page(
+                        request_id="",
+                        error_message="The MCP authorization request is missing a request id.",
+                    ),
+                    status_code=400,
+                )
+            if not identifier or not password:
+                return HTMLResponse(
+                    render_archidekt_authorize_page(
+                        request_id=request_id,
+                        error_message="Archidekt username/email and password are both required.",
+                    ),
+                    status_code=400,
+                )
+            pending = await auth_provider.get_pending_request(request_id)
+            if pending is None:
+                return HTMLResponse(
+                    render_archidekt_authorize_page(
+                        request_id=request_id,
+                        error_message="This MCP authorization request is missing or has expired. Start the app connection again from ChatGPT.",
+                    ),
+                    status_code=400,
+                )
+
+            login_account = (
+                ArchidektAccount(email=identifier, password=password)
+                if "@" in identifier
+                else ArchidektAccount(username=identifier, password=password)
+            )
+            try:
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(runtime.http_timeout_seconds),
+                    headers={"User-Agent": runtime.user_agent},
+                ) as auth_http_client:
+                    auth_client = ArchidektAuthenticatedClient(auth_http_client, runtime)
+                    resolved_account = await auth_client.login(login_account)
+                redirect_url = await auth_provider.complete_authorization(request_id, resolved_account)
+            except Exception as error:
+                return HTMLResponse(
+                    render_archidekt_authorize_page(
+                        request_id=request_id,
+                        error_message=f"Archidekt login failed: {error}",
+                    ),
+                    status_code=400,
+                )
+
+            return RedirectResponse(redirect_url, status_code=302)
 
     @server.custom_route("/api/login", methods=["POST"])
     async def api_login(request: Request) -> Response:
@@ -1192,9 +1362,9 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             PersonalDeckCardsRequest,
             lambda payload: with_service(
                 lambda active_service: active_service.get_personal_deck_cards(
-                    payload.account,
-                    payload.deck_id,
-                    payload.include_deleted,
+                    deck_id=payload.deck_id,
+                    include_deleted=payload.include_deleted,
+                    account=payload.account,
                 )
             ),
         )
@@ -1206,8 +1376,8 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             PersonalDeckCreateRequest,
             lambda payload: with_service(
                 lambda active_service: active_service.create_personal_deck(
-                    payload.account,
-                    payload.deck,
+                    deck=payload.deck,
+                    account=payload.account,
                 )
             ),
         )
@@ -1219,9 +1389,9 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             PersonalDeckUpdateRequest,
             lambda payload: with_service(
                 lambda active_service: active_service.update_personal_deck(
-                    payload.account,
-                    payload.deck_id,
-                    payload.deck,
+                    deck_id=payload.deck_id,
+                    deck=payload.deck,
+                    account=payload.account,
                 )
             ),
         )
@@ -1233,8 +1403,8 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             PersonalDeckDeleteRequest,
             lambda payload: with_service(
                 lambda active_service: active_service.delete_personal_deck(
-                    payload.account,
-                    payload.deck_id,
+                    deck_id=payload.deck_id,
+                    account=payload.account,
                 )
             ),
         )
@@ -1246,9 +1416,9 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             PersonalDeckCardsMutationRequest,
             lambda payload: with_service(
                 lambda active_service: active_service.modify_personal_deck_cards(
-                    payload.account,
-                    payload.deck_id,
-                    payload.cards,
+                    deck_id=payload.deck_id,
+                    cards=payload.cards,
+                    account=payload.account,
                 )
             ),
         )
@@ -1260,8 +1430,8 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             CollectionUpsertRequest,
             lambda payload: with_service(
                 lambda active_service: active_service.upsert_collection_entries(
-                    payload.account,
-                    payload.entries,
+                    entries=payload.entries,
+                    account=payload.account,
                 )
             ),
         )
@@ -1312,7 +1482,8 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         return (
             "Collection overview and collection search tools require `collection` with one of collection_id, "
             "collection_url, or username. The server is stateless, so do not rely on implicit session state. "
-            "Deck and collection mutation tools instead require an authenticated `account` object."
+            "Deck and collection mutation tools need an authenticated Archidekt identity, which can come from an "
+            "explicit `account` object or the current MCP OAuth session."
         )
 
     @server.resource("deckbuilder://account-contract")
@@ -1320,7 +1491,11 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         return (
             "Authenticated Archidekt calls accept `account` with either token, or username/email plus password. "
             "Prefer calling `login_archidekt` once, then reuse the returned `account` object without the password. "
-            "Deck and collection write tools always require `account`."
+            "That login response also includes the current personal deck list when Archidekt returns it successfully. "
+            "If this MCP server is connected through MCP OAuth, private tools may omit `account` and use the current "
+            "authenticated MCP session instead. "
+            "When MCP OAuth is active, the private read and write tools can all reuse that session-scoped identity "
+            "without repeating credentials in the tool payload."
         )
 
     @server.resource("deckbuilder://filter-reference")
@@ -1338,6 +1513,9 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         return (
             "Use search_owned_cards for owned cards and search_unowned_cards for missing cards. "
             "For Commander requests, prefer color_identity over current colors. "
+            "If authenticated credentials are available and current deck context matters, start with login_archidekt "
+            "because it returns the normalized account, inferred collection locator, and current personal decks. "
+            "When the server is already connected through MCP OAuth, call login_archidekt without an account payload. "
             "When search_owned_cards returns personal_deck_usage, ask whether already-slotted cards may be reused. "
             "Use search_archidekt_cards to resolve Archidekt card ids before deck or collection writes."
         )
@@ -1345,10 +1523,12 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
     @server.tool(
         description=(
             "Log into Archidekt using username/email plus password, or normalize an already-known token. "
-            "Returns an `account` object for later private deck or collection requests."
+            "Returns a normalized `account` object, the inferred personal collection locator, and the current "
+            "personal deck list when available. If the MCP session is already authenticated through OAuth, "
+            "this tool can be called without an `account` payload."
         )
     )
-    async def login_archidekt(account: ArchidektAccount) -> dict:
+    async def login_archidekt(account: ArchidektAccount | None = None) -> dict:
         active_service = await get_service()
         LOGGER.info("Tool call: login_archidekt identity=%s", describe_account(account))
         response = await active_service.login_archidekt(account)
@@ -1357,10 +1537,11 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
     @server.tool(
         description=(
             "List personal Archidekt decks for the authenticated account, including private and unlisted decks "
-            "when Archidekt returns them to the logged-in user."
+            "when Archidekt returns them to the logged-in user. If the MCP session is already authenticated through "
+            "OAuth, this tool can be called without an `account` payload."
         )
     )
-    async def list_personal_decks(account: ArchidektAccount) -> dict:
+    async def list_personal_decks(account: ArchidektAccount | None = None) -> dict:
         active_service = await get_service()
         LOGGER.info("Tool call: list_personal_decks identity=%s", describe_account(account))
         response = await active_service.list_personal_decks(account)
@@ -1389,9 +1570,9 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         )
     )
     async def get_personal_deck_cards(
-        account: ArchidektAccount,
         deck_id: int,
         include_deleted: bool = False,
+        account: ArchidektAccount | None = None,
     ) -> dict:
         active_service = await get_service()
         LOGGER.info(
@@ -1400,7 +1581,11 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             deck_id,
             include_deleted,
         )
-        response = await active_service.get_personal_deck_cards(account, deck_id, include_deleted)
+        response = await active_service.get_personal_deck_cards(
+            deck_id=deck_id,
+            include_deleted=include_deleted,
+            account=account,
+        )
         return response.model_dump(mode="json")
 
     @server.tool(
@@ -1410,8 +1595,8 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         )
     )
     async def create_personal_deck(
-        account: ArchidektAccount,
         deck: PersonalDeckCreateInput,
+        account: ArchidektAccount | None = None,
     ) -> dict:
         active_service = await get_service()
         LOGGER.info(
@@ -1420,7 +1605,7 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             deck.name,
             deck.deck_format,
         )
-        response = await active_service.create_personal_deck(account, deck)
+        response = await active_service.create_personal_deck(deck=deck, account=account)
         return response.model_dump(mode="json")
 
     @server.tool(
@@ -1430,9 +1615,9 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         )
     )
     async def update_personal_deck(
-        account: ArchidektAccount,
         deck_id: int,
         deck: PersonalDeckUpdateInput,
+        account: ArchidektAccount | None = None,
     ) -> dict:
         active_service = await get_service()
         LOGGER.info(
@@ -1441,20 +1626,20 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             deck_id,
             deck.model_dump(mode="json", exclude_none=True),
         )
-        response = await active_service.update_personal_deck(account, deck_id, deck)
+        response = await active_service.update_personal_deck(deck_id=deck_id, deck=deck, account=account)
         return response.model_dump(mode="json")
 
     @server.tool(
         description="Delete one personal Archidekt deck owned by the authenticated account."
     )
-    async def delete_personal_deck(account: ArchidektAccount, deck_id: int) -> dict:
+    async def delete_personal_deck(deck_id: int, account: ArchidektAccount | None = None) -> dict:
         active_service = await get_service()
         LOGGER.info(
             "Tool call: delete_personal_deck identity=%s deck_id=%s",
             describe_account(account),
             deck_id,
         )
-        response = await active_service.delete_personal_deck(account, deck_id)
+        response = await active_service.delete_personal_deck(deck_id=deck_id, account=account)
         return response.model_dump(mode="json")
 
     @server.tool(
@@ -1464,9 +1649,9 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         )
     )
     async def modify_personal_deck_cards(
-        account: ArchidektAccount,
         deck_id: int,
         cards: list[PersonalDeckCardMutation],
+        account: ArchidektAccount | None = None,
     ) -> dict:
         active_service = await get_service()
         LOGGER.info(
@@ -1475,7 +1660,11 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             deck_id,
             len(cards),
         )
-        response = await active_service.modify_personal_deck_cards(account, deck_id, cards)
+        response = await active_service.modify_personal_deck_cards(
+            deck_id=deck_id,
+            cards=cards,
+            account=account,
+        )
         return response.model_dump(mode="json")
 
     @server.tool(
@@ -1485,8 +1674,8 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         )
     )
     async def upsert_collection_entries(
-        account: ArchidektAccount,
         entries: list[CollectionCardUpsert],
+        account: ArchidektAccount | None = None,
     ) -> dict:
         active_service = await get_service()
         LOGGER.info(
@@ -1494,7 +1683,7 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             describe_account(account),
             len(entries),
         )
-        response = await active_service.upsert_collection_entries(account, entries)
+        response = await active_service.upsert_collection_entries(entries=entries, account=account)
         return response.model_dump(mode="json")
 
     @server.tool(

@@ -5,26 +5,27 @@ Stateless MCP server for Commander deckbuilding against Archidekt collections, p
 The server is designed for LLM-driven workflows:
 
 - optional authenticated Archidekt access through explicit request payloads
-- no server-side user session persistence
+- optional MCP OAuth auth for ChatGPT and other remote MCP clients
+- no server-side deckbuilding session persistence
 - no per-user environment variables
 - every request passes the collection locator explicitly
-- private deck access requires an explicit `account` object on the request
+- private deck access can use either an explicit `account` object or the active MCP auth session
 - collection snapshots are cached in Redis for 24 hours by default
-- authenticated collection snapshots and personal deck overlap data are also cached in Redis by default
+- authenticated collection snapshots, personal deck overlap data, and optional MCP OAuth state are also cached in Redis by default
 
 ## What It Exposes
 
 MCP tools:
 
-- `login_archidekt(account)`
-- `list_personal_decks(account)`
+- `login_archidekt([account])`
+- `list_personal_decks([account])`
 - `search_archidekt_cards(filters)`
-- `get_personal_deck_cards(account, deck_id)`
-- `create_personal_deck(account, deck)`
-- `update_personal_deck(account, deck_id, deck)`
-- `delete_personal_deck(account, deck_id)`
-- `modify_personal_deck_cards(account, deck_id, cards)`
-- `upsert_collection_entries(account, entries)`
+- `get_personal_deck_cards(deck_id, include_deleted, [account])`
+- `create_personal_deck(deck, [account])`
+- `update_personal_deck(deck_id, deck, [account])`
+- `delete_personal_deck(deck_id, [account])`
+- `modify_personal_deck_cards(deck_id, cards, [account])`
+- `upsert_collection_entries(entries, [account])`
 - `get_collection_overview(collection)`
 - `refresh_collection_cache(collection)`
 - `search_owned_cards(collection, filters)`
@@ -46,6 +47,7 @@ HTTP routes:
 - `/api/overview` stateless HTTP test for `get_collection_overview`
 - `/api/search-owned` stateless HTTP test for `search_owned_cards`
 - `/api/search-unowned` stateless HTTP test for `search_unowned_cards`
+- `/auth/archidekt-login` OAuth authorization page used when MCP auth is enabled
 - `/mcp` streamable HTTP MCP endpoint
 
 ## Request Model
@@ -65,11 +67,16 @@ Authenticated requests may also include optional `account` with either:
 - `token`
 - `username` or `email`, plus `password`
 
+If the MCP client connected through OAuth, private tools may omit `account` and use the active MCP auth session instead.
+That same session-scoped identity can be reused for private deck and collection writes too.
+
 Recommended auth flow:
 
-1. Call `login_archidekt(account)` with username/email and password.
-2. Reuse the returned `account` object in later tool calls instead of resending the password.
-3. For the logged-in user's collection, reuse the returned `collection.collection_id`.
+1. If MCP OAuth is enabled, connect the app through ChatGPT and sign in on `/auth/archidekt-login`.
+2. Call `login_archidekt()` without an `account` payload, or call `login_archidekt(account)` when you are not using MCP OAuth.
+3. Read the `personal_decks` block from the login response so the model immediately knows which decks already exist on the account.
+4. Reuse the returned `account` object in later tool calls only when you are not relying on MCP auth.
+5. For the logged-in user's collection, reuse the returned `collection.collection_id`.
 
 Example:
 
@@ -98,9 +105,33 @@ Authenticated example:
 }
 ```
 
-When `search_owned_cards` is called with `account`, the response may include `personal_deck_usage`,
+When `search_owned_cards` is called with `account`, or when an MCP auth session is active, the response may include `personal_deck_usage`,
 `personal_deck_count`, and `personal_deck_total_quantity` on each owned result so the LLM can warn
 that a candidate card is already committed to other personal decks.
+
+## MCP OAuth Auth
+
+To let ChatGPT keep the Archidekt identity attached to the MCP session instead of passing credentials in tool arguments, enable MCP OAuth:
+
+```powershell
+$env:ARCHIDEKT_MCP_AUTH_ENABLED = "true"
+$env:ARCHIDEKT_MCP_PUBLIC_BASE_URL = "https://your-public-domain"
+```
+
+Required notes:
+
+- `ARCHIDEKT_MCP_PUBLIC_BASE_URL` must be the public base URL ChatGPT reaches, without the `/mcp` suffix
+- when auth is enabled, the MCP endpoint stays at `/mcp`, but ChatGPT will also use `/.well-known/oauth-authorization-server`, `/authorize`, `/token`, `/register`, `/revoke`, and `/auth/archidekt-login`
+- the authorization page asks for Archidekt username/email plus password once, exchanges that for an Archidekt token, and stores the resulting Archidekt token in Redis-backed OAuth state
+- raw passwords are used only during the authorization step and are not persisted in Redis
+
+After the app is connected through OAuth, private MCP tools can omit `account`, for example:
+
+```text
+login_archidekt()
+list_personal_decks()
+search_owned_cards(collection=..., filters=...)
+```
 
 Owned card results may also include `archidekt_card_ids`, which can be reused directly in
 `modify_personal_deck_cards` and `upsert_collection_entries` without guessing Archidekt ids.
@@ -109,11 +140,12 @@ Owned card results may also include `archidekt_card_ids`, which can be reused di
 
 For fully automated deck/account management, the recommended sequence is:
 
-1. Call `login_archidekt(account)`.
-2. Use `search_owned_cards` and/or `search_archidekt_cards` to resolve Archidekt `card_id` values.
-3. Use `list_personal_decks` or `get_personal_deck_cards` to inspect the current account state.
-4. Create or update the deck with `create_personal_deck`, `update_personal_deck`, and `modify_personal_deck_cards`.
-5. Update the account collection with `upsert_collection_entries` when needed.
+1. Call `login_archidekt()` if MCP OAuth is active, otherwise call `login_archidekt(account)`.
+2. Use the returned `personal_decks` list as the first source of truth for which decks already exist on the account.
+3. Use `search_owned_cards` and/or `search_archidekt_cards` to resolve Archidekt `card_id` values.
+4. Use `list_personal_decks` or `get_personal_deck_cards` only when you need a fresh deck listing or the contents of a specific deck.
+5. Create or update the deck with `create_personal_deck`, `update_personal_deck`, and `modify_personal_deck_cards`.
+6. Update the account collection with `upsert_collection_entries` when needed.
 
 `get_personal_deck_cards` returns `deck_relation_id` values for cards already in a deck. Those ids
 should be reused for `modify` and `remove` actions in `modify_personal_deck_cards`.
@@ -152,6 +184,7 @@ The bundled Web UI is fully in English and is meant to help you:
 
 - enter a public Archidekt collection locator
 - paste optional authenticated `account` JSON
+- test the same flows even when no MCP OAuth session is present
 - generate the exact `collection` JSON for MCP tool calls
 - generate an LLM instruction block for the current request
 - test login and personal deck listing over HTTP
@@ -183,6 +216,9 @@ $env:ARCHIDEKT_MCP_REDIS_URL = "redis://127.0.0.1:6379/0"
 $env:ARCHIDEKT_MCP_CACHE_TTL_SECONDS = "86400"
 $env:ARCHIDEKT_MCP_PERSONAL_DECK_CACHE_TTL_SECONDS = "300"
 $env:ARCHIDEKT_MCP_USER_AGENT = "archidekt-mcp-server/0.3 (+mailto:you@example.com)"
+# Optional MCP OAuth for ChatGPT / remote clients:
+# $env:ARCHIDEKT_MCP_AUTH_ENABLED = "true"
+# $env:ARCHIDEKT_MCP_PUBLIC_BASE_URL = "https://your-public-domain"
 .venv\Scripts\python.exe -m archidekt_commander_mcp.server
 ```
 
@@ -315,5 +351,5 @@ The same runtime options can also be provided as environment variables with the 
 - Set a real contact in the `User-Agent` when exposing the server publicly.
 - Redis is the cache backend. The server no longer uses local file-based collection snapshots.
 - Authenticated collection snapshots and personal deck overlap data are cached in Redis with account-scoped keys.
-- The cache stores fetched Archidekt data, not raw passwords. Reuse the returned `account.token` after login instead of resending credentials.
+- The cache stores fetched Archidekt data, OAuth session state, and Archidekt tokens, but not raw passwords. Reuse the returned `account.token` after login instead of resending credentials when you are not using MCP OAuth.
 - The server is stateless with respect to user identity and collection context. Always pass the locator explicitly.

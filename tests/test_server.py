@@ -1,16 +1,28 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from datetime import UTC, datetime, timedelta
+import hashlib
 import os
 import unittest
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
+from mcp.server.auth.middleware.auth_context import auth_context_var
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+from mcp.server.auth.provider import AuthorizationParams
+from mcp.shared.auth import OAuthClientInformationFull
 from pydantic import ValidationError
 from starlette.testclient import TestClient
 
 from archidekt_commander_mcp.clients import CollectionCache
 from archidekt_commander_mcp.config import RuntimeSettings
+from archidekt_commander_mcp.mcp_auth import (
+    AUTH_SCOPE,
+    ArchidektAccessToken,
+    RedisArchidektOAuthProvider,
+)
 from archidekt_commander_mcp.models import (
     ArchidektAccount,
     AuthenticatedAccount,
@@ -20,6 +32,7 @@ from archidekt_commander_mcp.models import (
     CollectionLocator,
     CollectionSnapshot,
     PersonalDeckCardUsage,
+    PersonalDeckSummary,
 )
 from archidekt_commander_mcp.server import DeckbuildingService, PersonalDeckUsageSnapshot, create_server
 
@@ -66,7 +79,7 @@ class HttpRouteTests(unittest.TestCase):
         server = create_server(RuntimeSettings())
         client = TestClient(server.streamable_http_app())
         response = client.post("/api/login", json={})
-        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.status_code, 400)
         self.assertIn("error", response.json())
 
     def test_overview_api_rejects_missing_collection(self) -> None:
@@ -103,6 +116,7 @@ class FakeCollectionClient:
     def __init__(self, snapshot: CollectionSnapshot) -> None:
         self.snapshot = snapshot
         self.calls = 0
+        self.auth_tokens: list[str | None] = []
 
     async def fetch_snapshot(
         self,
@@ -110,8 +124,8 @@ class FakeCollectionClient:
         auth_token: str | None = None,
     ) -> CollectionSnapshot:
         del collection
-        del auth_token
         self.calls += 1
+        self.auth_tokens.append(auth_token)
         return self.snapshot
 
 
@@ -164,6 +178,33 @@ class FakeAuthMutationClient:
         }
 
 
+class FakeAuthLoginClient:
+    async def login(self, account: ArchidektAccount) -> AuthenticatedAccount:
+        del account
+        return AuthenticatedAccount(token="secret", username="tester", user_id=123)
+
+    async def resolve_account(self, account: ArchidektAccount) -> AuthenticatedAccount:
+        return await self.login(account)
+
+    async def list_personal_decks(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        page_size: int = 100,
+    ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
+        del page_size
+        if isinstance(account, AuthenticatedAccount):
+            resolved = account
+        else:
+            resolved = AuthenticatedAccount(token="secret", username="tester", user_id=123)
+        return (
+            resolved,
+            [
+                PersonalDeckSummary(id=7, name="Artifacts", owner_username="tester", owner_id=123),
+                PersonalDeckSummary(id=8, name="Graveyard Value", owner_username="tester", owner_id=123),
+            ],
+        )
+
+
 class FakeRedis:
     def __init__(self) -> None:
         self.storage: dict[str, tuple[str, datetime | None]] = {}
@@ -199,10 +240,83 @@ class FakeRedis:
             return -2
         return remaining
 
-    async def delete(self, key: str) -> int:
-        existed = key in self.storage
-        self.storage.pop(key, None)
-        return 1 if existed else 0
+    async def delete(self, *keys: str) -> int:
+        deleted = 0
+        for key in keys:
+            if key in self.storage:
+                deleted += 1
+            self.storage.pop(key, None)
+        return deleted
+
+    async def aclose(self) -> None:
+        return None
+
+
+class OAuthProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_authorize_and_exchange_round_trip(self) -> None:
+        redis_client = FakeRedis()
+        provider = RedisArchidektOAuthProvider(
+            redis_client,
+            key_prefix="archidekt-commander",
+            issuer_url="http://127.0.0.1:8000",
+            auth_code_ttl_seconds=600,
+            access_token_ttl_seconds=3600,
+            refresh_token_ttl_seconds=7200,
+        )
+        client = OAuthClientInformationFull(
+            client_id="client-1",
+            client_secret="secret",
+            redirect_uris=["https://chat.openai.com/a/oauth/callback"],
+            token_endpoint_auth_method="client_secret_post",
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+            scope=AUTH_SCOPE,
+        )
+        await provider.register_client(client)
+
+        redirect_to_form = await provider.authorize(
+            client,
+            AuthorizationParams(
+                state="state-123",
+                scopes=[AUTH_SCOPE],
+                code_challenge="pkce-challenge",
+                redirect_uri="https://chat.openai.com/a/oauth/callback",
+                redirect_uri_provided_explicitly=True,
+                resource="http://127.0.0.1:8000/mcp",
+            ),
+        )
+        request_id = parse_qs(urlparse(redirect_to_form).query)["request_id"][0]
+
+        redirect_back = await provider.complete_authorization(
+            request_id,
+            AuthenticatedAccount(token="arch-token", username="tester", user_id=123),
+        )
+        code = parse_qs(urlparse(redirect_back).query)["code"][0]
+        loaded_code = await provider.load_authorization_code(client, code)
+
+        self.assertIsNotNone(loaded_code)
+        assert loaded_code is not None
+
+        token = await provider.exchange_authorization_code(client, loaded_code)
+        self.assertEqual(token.scope, AUTH_SCOPE)
+        self.assertIsNotNone(token.refresh_token)
+
+        access = await provider.load_access_token(token.access_token)
+        self.assertIsNotNone(access)
+        assert access is not None
+        self.assertEqual(access.archidekt_username, "tester")
+        self.assertEqual(access.archidekt_user_id, 123)
+
+        refresh = await provider.load_refresh_token(client, token.refresh_token or "")
+        self.assertIsNotNone(refresh)
+        assert refresh is not None
+
+        rotated = await provider.exchange_refresh_token(client, refresh, [AUTH_SCOPE])
+        self.assertIsNotNone(await provider.load_access_token(rotated.access_token))
+
+
+def _pkce_challenge(verifier: str) -> str:
+    return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("utf-8")).digest()).decode().rstrip("=")
 
 
 class CollectionCacheRedisTests(unittest.IsolatedAsyncioTestCase):
@@ -314,6 +428,51 @@ class CollectionCacheRedisTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_login_archidekt_includes_personal_decks_context(self) -> None:
+        service = DeckbuildingService(RuntimeSettings())
+        original_redis = service.redis_client
+        service.auth_client = FakeAuthLoginClient()
+        await original_redis.aclose()
+        try:
+            response = await service.login_archidekt(
+                ArchidektAccount(username="tester", password="hunter2")
+            )
+            self.assertEqual(response.account.username, "tester")
+            self.assertEqual(response.collection.collection_id, 123)
+            self.assertIsNotNone(response.personal_decks)
+            assert response.personal_decks is not None
+            self.assertEqual(response.personal_decks.total_decks, 2)
+            self.assertEqual(response.personal_decks.decks[0].name, "Artifacts")
+        finally:
+            await service.http_client.aclose()
+
+    async def test_login_archidekt_uses_mcp_auth_context_when_account_is_omitted(self) -> None:
+        service = DeckbuildingService(RuntimeSettings())
+        service.auth_client = FakeAuthLoginClient()
+        auth_token = ArchidektAccessToken(
+            token="mcp-access-token",
+            client_id="client-1",
+            scopes=[AUTH_SCOPE],
+            expires_at=int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+            resource="http://127.0.0.1:8000/mcp",
+            archidekt_token="arch-token",
+            archidekt_username="tester",
+            archidekt_user_id=123,
+            session_id="session-1",
+        )
+        reset_token = auth_context_var.set(AuthenticatedUser(auth_token))
+        try:
+            response = await service.login_archidekt()
+            self.assertEqual(response.account.username, "tester")
+            self.assertEqual(response.collection.collection_id, 123)
+            self.assertIsNotNone(response.personal_decks)
+            assert response.personal_decks is not None
+            self.assertEqual(response.personal_decks.total_decks, 2)
+            self.assertTrue(any("MCP auth session" in note for note in response.notes))
+        finally:
+            auth_context_var.reset(reset_token)
+            await service.aclose()
+
     async def test_get_personal_deck_cards_maps_relation_and_card_ids(self) -> None:
         service = DeckbuildingService(RuntimeSettings())
         original_redis = service.redis_client
@@ -321,7 +480,7 @@ class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
         await original_redis.aclose()
         account = AuthenticatedAccount(token="secret", username="tester", user_id=1)
         try:
-            response = await service.get_personal_deck_cards(account, deck_id=55)
+            response = await service.get_personal_deck_cards(deck_id=55, account=account)
             self.assertEqual(response.deck_id, 55)
             self.assertEqual(response.total_cards, 1)
             self.assertEqual(response.cards[0].deck_relation_id, 77)
@@ -330,6 +489,103 @@ class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.cards[0].type_line, "Artifact")
         finally:
             await service.http_client.aclose()
+
+    async def test_auth_context_keeps_private_collection_cache_user_isolated(self) -> None:
+        snapshot = CollectionSnapshot(
+            collection_id=321,
+            owner_id=654,
+            owner_username="private-user",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=1,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/321",
+            records=[],
+        )
+        service = DeckbuildingService(RuntimeSettings())
+        original_redis = service.redis_client
+        redis_client = FakeRedis()
+        collection_client = FakeCollectionClient(snapshot)
+        service.redis_client = redis_client
+        service.cache.redis = redis_client
+        service.archidekt_client = collection_client
+        service.cache.client = collection_client
+        await original_redis.aclose()
+        collection = CollectionLocator(collection_id=321)
+        first_token = auth_context_var.set(
+            AuthenticatedUser(
+                ArchidektAccessToken(
+                    token="mcp-access-token-1",
+                    client_id="client-1",
+                    scopes=[AUTH_SCOPE],
+                    expires_at=int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+                    resource="http://127.0.0.1:8000/mcp",
+                    archidekt_token="arch-token-1",
+                    archidekt_username="tester-1",
+                    archidekt_user_id=111,
+                    session_id="session-1",
+                )
+            )
+        )
+        try:
+            first_response = await service.get_collection_overview(collection)
+            self.assertEqual(first_response.collection_id, 321)
+        finally:
+            auth_context_var.reset(first_token)
+
+        second_token = auth_context_var.set(
+            AuthenticatedUser(
+                ArchidektAccessToken(
+                    token="mcp-access-token-2",
+                    client_id="client-1",
+                    scopes=[AUTH_SCOPE],
+                    expires_at=int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+                    resource="http://127.0.0.1:8000/mcp",
+                    archidekt_token="arch-token-2",
+                    archidekt_username="tester-2",
+                    archidekt_user_id=222,
+                    session_id="session-2",
+                )
+            )
+        )
+        try:
+            second_response = await service.get_collection_overview(collection)
+            self.assertEqual(second_response.collection_id, 321)
+        finally:
+            auth_context_var.reset(second_token)
+
+        first_token_repeat = auth_context_var.set(
+            AuthenticatedUser(
+                ArchidektAccessToken(
+                    token="mcp-access-token-1b",
+                    client_id="client-1",
+                    scopes=[AUTH_SCOPE],
+                    expires_at=int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+                    resource="http://127.0.0.1:8000/mcp",
+                    archidekt_token="arch-token-1",
+                    archidekt_username="tester-1",
+                    archidekt_user_id=111,
+                    session_id="session-1b",
+                )
+            )
+        )
+        try:
+            cached_response = await service.get_collection_overview(collection)
+            self.assertEqual(cached_response.collection_id, 321)
+        finally:
+            auth_context_var.reset(first_token_repeat)
+            await service.http_client.aclose()
+
+        self.assertEqual(collection_client.calls, 2)
+        self.assertEqual(collection_client.auth_tokens, ["arch-token-1", "arch-token-2"])
+        redis_keys = list(redis_client.storage)
+        self.assertTrue(
+            any("private:collection:private-collection:id:321:game:1:user:111" in key for key in redis_keys)
+        )
+        self.assertTrue(
+            any("private:collection:private-collection:id:321:game:1:user:222" in key for key in redis_keys)
+        )
 
     async def test_upsert_collection_entries_invalidates_public_and_private_caches(self) -> None:
         snapshot = CollectionSnapshot(
@@ -371,8 +627,8 @@ class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(public_key, redis_client.storage)
 
             response = await service.upsert_collection_entries(
-                account,
-                [CollectionCardUpsert(card_id=150824, quantity=1, game=1)],
+                entries=[CollectionCardUpsert(card_id=150824, quantity=1, game=1)],
+                account=account,
             )
 
             self.assertEqual(response.affected_count, 1)
@@ -416,6 +672,148 @@ class PersonalDeckUsageAnnotationTests(unittest.TestCase):
             self.assertEqual(result.personal_deck_usage[0].deck_name, "Artifacts")
         finally:
             asyncio.run(service.aclose())
+
+
+class OAuthHttpRouteTests(unittest.TestCase):
+    def test_oauth_round_trip_supports_accountless_private_api_calls(self) -> None:
+        redis_client = FakeRedis()
+
+        async def fake_login(
+            self,
+            account: ArchidektAccount,
+        ) -> AuthenticatedAccount:
+            del self
+            identifier = account.username or account.email or "unknown"
+            return AuthenticatedAccount(
+                token=f"arch-token-{identifier}",
+                username=account.username or "oauth-user",
+                user_id=111,
+            )
+
+        async def fake_list_personal_decks(
+            self,
+            account: ArchidektAccount | AuthenticatedAccount,
+            page_size: int = 100,
+        ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
+            del self
+            del page_size
+            if isinstance(account, AuthenticatedAccount):
+                resolved = account
+            else:
+                resolved = AuthenticatedAccount(
+                    token=account.token or "arch-token-oauth-user",
+                    username=account.username or "oauth-user",
+                    user_id=account.user_id or 111,
+                )
+            return (
+                resolved,
+                [PersonalDeckSummary(id=17, name="OAuth Deck", owner_username=resolved.username, owner_id=resolved.user_id)],
+            )
+
+        with (
+            patch("archidekt_commander_mcp.server.redis_async.from_url", return_value=redis_client),
+            patch("archidekt_commander_mcp.server.ArchidektAuthenticatedClient.login", new=fake_login),
+            patch(
+                "archidekt_commander_mcp.server.ArchidektAuthenticatedClient.list_personal_decks",
+                new=fake_list_personal_decks,
+            ),
+        ):
+            server = create_server(
+                RuntimeSettings(
+                    auth_enabled=True,
+                    public_base_url="https://testserver",
+                    redis_url="redis://fake/0",
+                )
+            )
+            client = TestClient(server.streamable_http_app())
+
+            registration_response = client.post(
+                "/register",
+                json={
+                    "redirect_uris": ["https://chat.openai.com/a/oauth/callback"],
+                    "token_endpoint_auth_method": "none",
+                    "grant_types": ["authorization_code", "refresh_token"],
+                    "response_types": ["code"],
+                    "scope": AUTH_SCOPE,
+                    "client_name": "Test MCP Client",
+                },
+            )
+            self.assertEqual(registration_response.status_code, 201)
+            client_id = registration_response.json()["client_id"]
+
+            verifier = "oauth-verifier-123"
+            authorize_response = client.get(
+                "/authorize",
+                params={
+                    "response_type": "code",
+                    "client_id": client_id,
+                    "redirect_uri": "https://chat.openai.com/a/oauth/callback",
+                    "scope": AUTH_SCOPE,
+                    "state": "state-123",
+                    "resource": "https://testserver/mcp",
+                    "code_challenge": _pkce_challenge(verifier),
+                    "code_challenge_method": "S256",
+                },
+                follow_redirects=False,
+            )
+            self.assertEqual(authorize_response.status_code, 302)
+            auth_login_url = authorize_response.headers["location"]
+            self.assertIn("/auth/archidekt-login?request_id=", auth_login_url)
+
+            login_page_response = client.get(auth_login_url)
+            self.assertEqual(login_page_response.status_code, 200)
+            self.assertIn("Connect Archidekt", login_page_response.text)
+
+            request_id = parse_qs(urlparse(auth_login_url).query)["request_id"][0]
+            auth_form_response = client.post(
+                "/auth/archidekt-login",
+                data={
+                    "request_id": request_id,
+                    "identifier": "oauth-user",
+                    "password": "super-secret",
+                },
+                follow_redirects=False,
+            )
+            self.assertEqual(auth_form_response.status_code, 302)
+            redirect_back = auth_form_response.headers["location"]
+            redirect_query = parse_qs(urlparse(redirect_back).query)
+            self.assertEqual(redirect_query["state"][0], "state-123")
+            code = redirect_query["code"][0]
+
+            token_response = client.post(
+                "/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": client_id,
+                    "code": code,
+                    "redirect_uri": "https://chat.openai.com/a/oauth/callback",
+                    "code_verifier": verifier,
+                },
+            )
+            self.assertEqual(token_response.status_code, 200)
+            access_token = token_response.json()["access_token"]
+            self.assertTrue(access_token)
+
+            login_response = client.post(
+                "/api/login",
+                json={},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            self.assertEqual(login_response.status_code, 200)
+            login_payload = login_response.json()
+            self.assertEqual(login_payload["account"]["username"], "oauth-user")
+            self.assertEqual(login_payload["collection"]["collection_id"], 111)
+            self.assertEqual(login_payload["personal_decks"]["total_decks"], 1)
+            self.assertEqual(login_payload["personal_decks"]["decks"][0]["name"], "OAuth Deck")
+            self.assertTrue(any("MCP auth session" in note for note in login_payload["notes"]))
+
+            decks_response = client.post(
+                "/api/personal-decks",
+                json={},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            self.assertEqual(decks_response.status_code, 200)
+            self.assertEqual(decks_response.json()["decks"][0]["name"], "OAuth Deck")
 
 
 if __name__ == "__main__":

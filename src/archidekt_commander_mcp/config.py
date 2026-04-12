@@ -31,6 +31,11 @@ class RuntimeSettings(BaseSettings):
     transport: TransportMode = "streamable-http"
     streamable_http_path: str = "/mcp"
     stateless_http: bool = True
+    auth_enabled: bool = False
+    public_base_url: str | None = None
+    auth_code_ttl_seconds: int = Field(default=600, ge=60, le=3600)
+    auth_access_token_ttl_seconds: int = Field(default=86400, ge=300, le=2592000)
+    auth_refresh_token_ttl_seconds: int = Field(default=2592000, ge=3600, le=31536000)
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -38,6 +43,14 @@ class RuntimeSettings(BaseSettings):
         if value is None:
             return "INFO"
         return str(value).strip().upper() or "INFO"
+
+    @field_validator("public_base_url", mode="before")
+    @classmethod
+    def normalize_public_base_url(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        compact = str(value).strip()
+        return compact or None
 
     @field_validator("redis_url", mode="before")
     @classmethod
@@ -62,3 +75,10 @@ class RuntimeSettings(BaseSettings):
     @property
     def normalized_scryfall_base_url(self) -> str:
         return self.scryfall_base_url.rstrip("/")
+
+    @computed_field
+    @property
+    def normalized_public_base_url(self) -> str | None:
+        if not self.public_base_url:
+            return None
+        return self.public_base_url.rstrip("/")

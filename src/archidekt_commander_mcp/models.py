@@ -378,15 +378,15 @@ class ArchidektCardSearchRequest(BaseModel):
 
 
 class ArchidektLoginRequest(BaseModel):
-    account: ArchidektAccount
+    account: ArchidektAccount | None = None
 
 
 class PersonalDecksRequest(BaseModel):
-    account: ArchidektAccount
+    account: ArchidektAccount | None = None
 
 
 class PersonalDeckCardsRequest(BaseModel):
-    account: ArchidektAccount
+    account: ArchidektAccount | None = None
     deck_id: int = Field(ge=1)
     include_deleted: bool = False
 
@@ -608,23 +608,23 @@ class PersonalDeckCardMutation(BaseModel):
 
 
 class PersonalDeckCreateRequest(BaseModel):
-    account: ArchidektAccount
+    account: ArchidektAccount | None = None
     deck: PersonalDeckCreateInput
 
 
 class PersonalDeckUpdateRequest(BaseModel):
-    account: ArchidektAccount
+    account: ArchidektAccount | None = None
     deck_id: int = Field(ge=1)
     deck: PersonalDeckUpdateInput
 
 
 class PersonalDeckDeleteRequest(BaseModel):
-    account: ArchidektAccount
+    account: ArchidektAccount | None = None
     deck_id: int = Field(ge=1)
 
 
 class PersonalDeckCardsMutationRequest(BaseModel):
-    account: ArchidektAccount
+    account: ArchidektAccount | None = None
     deck_id: int = Field(ge=1)
     cards: list[PersonalDeckCardMutation] = Field(min_length=1)
 
@@ -669,7 +669,7 @@ class CollectionCardUpsert(BaseModel):
 
 
 class CollectionUpsertRequest(BaseModel):
-    account: ArchidektAccount
+    account: ArchidektAccount | None = None
     entries: list[CollectionCardUpsert] = Field(min_length=1)
 
 
@@ -694,6 +694,7 @@ class ArchidektLoginResponse(BaseModel):
     account: AuthenticatedAccount
     collection: CollectionLocator
     notes: list[str] = Field(default_factory=list)
+    personal_decks: PersonalDecksResponse | None = None
 
 
 CardResult.model_rebuild()

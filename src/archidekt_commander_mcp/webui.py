@@ -291,7 +291,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
       <h1>Archidekt Commander Web UI</h1>
       <p>
         Stateless by default, with optional authenticated Archidekt access for private collections
-        personal deck overlap checks, and authenticated deck or collection writes. Every request still
+        and personal deck overlap checks, MCP OAuth sign-in for ChatGPT, and authenticated deck or collection writes. Every request still
         carries its own explicit context.
       </p>
       <div class="badges">
@@ -309,6 +309,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
           Provide exactly one of collection ID, public collection URL, or Archidekt username.
           This object must be passed in every collection-related MCP tool call. Add an optional
           authenticated account object when you need private decks, a private collection, or account writes.
+          If the MCP app is already connected through OAuth, the private MCP tools can omit `account`.
         </p>
         <div class="stack">
           <div class="two-col">
@@ -385,7 +386,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
           <div class="code-header">
             <div>
               <h2>Account JSON</h2>
-              <p class="meta small">Optional. Use this for login, private collections, personal deck overlap checks, and authenticated Archidekt writes.</p>
+              <p class="meta small">Optional. Use this for login, private collections, personal deck overlap checks, and authenticated Archidekt writes when no MCP OAuth session is already active.</p>
             </div>
             <button class="copy-button" data-copy-target="account-json">Copy JSON</button>
           </div>
@@ -483,7 +484,8 @@ def render_home_page(settings: RuntimeSettings) -> str:
         ...accountSection,
         "Rules:",
         "- Never assume the collection remains in memory between requests.",
-        "- If private collections or personal decks matter, call `login_archidekt` first and then reuse the returned `account` object.",
+        "- If private collections or personal decks matter, call `login_archidekt` first. Its response includes the normalized `account`, inferred `collection`, and current personal deck list when Archidekt returns it.",
+        "- If the MCP app is already connected through OAuth, call `login_archidekt` without an `account` payload.",
         "- Use `get_collection_overview` whenever you need context before making recommendations.",
         "- Use `list_personal_decks` when you need the user's own decks.",
         "- Use `search_archidekt_cards` to resolve Archidekt `card_id` values before deck or collection writes.",

@@ -1244,6 +1244,9 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
                 "cache_backend": "redis",
                 "private_cache_backend": "redis+memory-fallback",
                 "mcp_auth_enabled": runtime.auth_enabled,
+                "oauth_session_backend": "redis" if runtime.auth_enabled else "disabled",
+                "oauth_access_token_ttl_seconds": runtime.auth_access_token_ttl_seconds,
+                "oauth_refresh_token_ttl_seconds": runtime.auth_refresh_token_ttl_seconds,
             }
         )
 

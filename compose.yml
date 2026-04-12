@@ -1,7 +1,7 @@
 services:
   redis:
     image: redis:7.4-alpine
-    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "60", "1000", "--dir", "/data"]
     restart: unless-stopped
     volumes:
       - redis-data:/data

@@ -12,6 +12,7 @@ The server is designed for LLM-driven workflows:
 - private deck access can use either an explicit `account` object or the active MCP auth session
 - collection snapshots are cached in Redis for 24 hours by default
 - authenticated collection snapshots, personal deck overlap data, and optional MCP OAuth state are also cached in Redis by default
+- OAuth access tokens, refresh tokens, and session records are stored in Redis so authenticated MCP logins can survive app restarts when Redis persistence is enabled
 
 ## What It Exposes
 
@@ -124,6 +125,7 @@ Required notes:
 - when auth is enabled, the MCP endpoint stays at `/mcp`, but ChatGPT will also use `/.well-known/oauth-authorization-server`, `/authorize`, `/token`, `/register`, `/revoke`, and `/auth/archidekt-login`
 - the authorization page asks for Archidekt username/email plus password once, exchanges that for an Archidekt token, and stores the resulting Archidekt token in Redis-backed OAuth state
 - raw passwords are used only during the authorization step and are not persisted in Redis
+- with the bundled `compose.yml`, Redis uses append-only persistence on the `redis-data` volume, so OAuth logins survive MCP service restarts as long as that volume is preserved
 
 After the app is connected through OAuth, private MCP tools can omit `account`, for example:
 
@@ -287,6 +289,7 @@ With the stack running:
 - MCP endpoint: `http://127.0.0.1:8000/mcp`
 
 The Redis service is configured with append-only persistence and a named volume.
+That same persistent Redis volume also keeps MCP OAuth login sessions across app restarts.
 
 The app service uses environment variables instead of a long command override:
 
@@ -354,5 +357,6 @@ The same runtime options can also be provided as environment variables with the 
 - Set a real contact in the `User-Agent` when exposing the server publicly.
 - Redis is the cache backend. The server no longer uses local file-based collection snapshots.
 - Authenticated collection snapshots and personal deck overlap data are cached in Redis with account-scoped keys.
+- MCP OAuth sessions are also stored in Redis as access-token, refresh-token, and session records, so restarting the Python service does not force every user to sign in again if the Redis volume is still intact.
 - The cache stores fetched Archidekt data, OAuth session state, and Archidekt tokens, but not raw passwords. Reuse the returned `account.token` after login instead of resending credentials when you are not using MCP OAuth.
 - The server is stateless with respect to user identity and collection context. Always pass the locator explicitly.

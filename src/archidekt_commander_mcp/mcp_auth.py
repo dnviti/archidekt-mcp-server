@@ -59,8 +59,17 @@ class ArchidektAccessToken(AccessToken):
 
 class AuthSessionRecord(BaseModel):
     session_id: str
+    client_id: str
+    scopes: list[str] = Field(default_factory=lambda: [AUTH_SCOPE])
+    resource: str | None = None
     access_token: str
     refresh_token: str
+    access_expires_at: int
+    refresh_expires_at: int
+    created_at: int
+    archidekt_token: str
+    archidekt_username: str | None = None
+    archidekt_user_id: int | None = None
 
 
 class RedisArchidektOAuthProvider(
@@ -263,6 +272,12 @@ class RedisArchidektOAuthProvider(
             self._key("session", session.session_id),
         )
 
+    async def load_session(self, session_id: str) -> AuthSessionRecord | None:
+        payload = await self._load_json(self._key("session", session_id))
+        if payload is None:
+            return None
+        return AuthSessionRecord.model_validate(payload)
+
     def _build_session(
         self,
         *,
@@ -276,7 +291,9 @@ class RedisArchidektOAuthProvider(
         session_id = secrets.token_urlsafe(24)
         access_token_value = secrets.token_urlsafe(32)
         refresh_token_value = secrets.token_urlsafe(32)
-        access_expires_at = int(time.time()) + self.access_token_ttl_seconds
+        issued_at = int(time.time())
+        access_expires_at = issued_at + self.access_token_ttl_seconds
+        refresh_expires_at = issued_at + self.refresh_token_ttl_seconds
         access = ArchidektAccessToken(
             token=access_token_value,
             client_id=client_id,
@@ -292,7 +309,7 @@ class RedisArchidektOAuthProvider(
             token=refresh_token_value,
             client_id=client_id,
             scopes=scopes,
-            expires_at=int(time.time()) + self.refresh_token_ttl_seconds,
+            expires_at=refresh_expires_at,
             archidekt_token=archidekt_token,
             archidekt_username=archidekt_username,
             archidekt_user_id=archidekt_user_id,
@@ -300,8 +317,17 @@ class RedisArchidektOAuthProvider(
         )
         record = AuthSessionRecord(
             session_id=session_id,
+            client_id=client_id,
+            scopes=scopes,
+            resource=resource,
             access_token=access.token,
             refresh_token=refresh.token,
+            access_expires_at=access_expires_at,
+            refresh_expires_at=refresh_expires_at,
+            created_at=issued_at,
+            archidekt_token=archidekt_token,
+            archidekt_username=archidekt_username,
+            archidekt_user_id=archidekt_user_id,
         )
         return {"access": access, "refresh": refresh, "record": record}
 
@@ -321,10 +347,11 @@ class RedisArchidektOAuthProvider(
             refresh.model_dump(mode="json"),
             ex=self.refresh_token_ttl_seconds,
         )
+        session_ttl_seconds = max(self.access_token_ttl_seconds, self.refresh_token_ttl_seconds)
         await self._store_json(
             self._key("session", record.session_id),
             record.model_dump(mode="json"),
-            ex=max(self.access_token_ttl_seconds, self.refresh_token_ttl_seconds),
+            ex=session_ttl_seconds,
         )
 
     def _key(self, namespace: str, value: str) -> str:
@@ -440,7 +467,7 @@ def render_archidekt_authorize_page(
       </label>
       <button type="submit">Continue</button>
     </form>
-    <p class="note">The password is used only to perform the Archidekt login during this authorization step. The MCP server stores the resulting Archidekt token, not the raw password.</p>
+    <p class="note">The password is used only to perform the Archidekt login during this authorization step. The MCP server stores the resulting Archidekt token and OAuth session in Redis, not the raw password.</p>
   </main>
 </body>
 </html>"""

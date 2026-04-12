@@ -120,6 +120,28 @@ def _normalize_sort_field_and_direction(
     return canonical_field, implied_direction or alias_direction or normalized_direction
 
 
+def _extract_sort_alias(
+    payload: dict[str, object],
+) -> tuple[object, object]:
+    raw_sort = payload.get("sort")
+    if isinstance(raw_sort, dict):
+        return raw_sort.get("by"), raw_sort.get("direction")
+    if raw_sort is not None:
+        return raw_sort, payload.get("direction")
+
+    raw_order = payload.get("order")
+    if isinstance(raw_order, dict):
+        return raw_order.get("by"), raw_order.get("direction")
+    if raw_order is not None:
+        return raw_order, payload.get("direction")
+
+    raw_order_by = payload.get("order_by")
+    if raw_order_by is not None:
+        return raw_order_by, payload.get("direction")
+
+    return None, None
+
+
 class CollectionLocator(BaseModel):
     collection_id: int | None = Field(default=None, ge=1)
     collection_url: str | None = None
@@ -259,11 +281,12 @@ class CardSearchFilters(BaseModel):
             return value
 
         normalized = dict(value)
+        alias_sort_by, alias_sort_direction = _extract_sort_alias(normalized)
         had_sort_by = "sort_by" in normalized
         had_sort_direction = "sort_direction" in normalized
         sort_by, sort_direction = _normalize_sort_field_and_direction(
-            normalized.get("sort_by"),
-            normalized.get("sort_direction"),
+            normalized.get("sort_by", alias_sort_by),
+            normalized.get("sort_direction", alias_sort_direction),
         )
         if sort_by is None and had_sort_by:
             normalized.pop("sort_by", None)
@@ -274,6 +297,10 @@ class CardSearchFilters(BaseModel):
             normalized.pop("sort_direction", None)
         elif sort_direction is not None:
             normalized["sort_direction"] = sort_direction
+        normalized.pop("sort", None)
+        normalized.pop("order", None)
+        normalized.pop("order_by", None)
+        normalized.pop("direction", None)
         return normalized
 
     @field_validator(

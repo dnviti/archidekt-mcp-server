@@ -186,6 +186,14 @@ Filter mapping:
 - Prefer `color_identity` for Commander logic.
 - Use `type_includes`, `subtype_includes`, `supertypes_includes` and `oracle_terms_*`
   to express roles like ramp, draw, recursion, removal, board wipe and finisher.
+- For sorting, prefer the canonical pair `sort_by` plus `sort_direction` instead of shorthand fields.
+- Canonical `sort_by` values are `name`, `cmc`, `quantity`, `unit_price`, `total_value`,
+  `updated_at`, `added_at`, `edhrec_rank`, and `rarity`.
+- Example: for most expensive cards, use `sort_by="unit_price"` with `sort_direction="desc"`.
+- Example: for cheapest cards, use `sort_by="unit_price"` with `sort_direction="asc"`.
+- Example: for strongest EDHREC staples, use `sort_by="edhrec_rank"` with `sort_direction="asc"`.
+- Legacy aliases such as `sort="price_desc"` are accepted for compatibility, but the preferred MCP
+  contract for the model is always `sort_by` plus `sort_direction`.
 - Keep the semantic reasoning in the model and let the server enforce deterministic filters.
 
 Final response format:
@@ -1508,7 +1516,10 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             "oracle_terms_exclude, type_includes, subtype_includes, supertypes_includes, keywords_any, "
             "color_identity, color_identity_mode, colors, colors_mode, cmc_min, cmc_max, mana_values, "
             "commander_legal, rarities, set_codes, finishes, collection_tags_any, min_quantity, max_quantity, "
-            "max_price, price_source, include_tokens, unique_by, sort_by, sort_direction, limit, and page."
+            "max_price, price_source, include_tokens, unique_by, sort_by, sort_direction, limit, and page. "
+            "Preferred sorting contract: use `sort_by` with one of name, cmc, quantity, unit_price, "
+            "total_value, updated_at, added_at, edhrec_rank, or rarity, plus `sort_direction` set to "
+            "`asc` or `desc`. Example: `sort_by=unit_price` and `sort_direction=desc` for highest price first."
         )
 
     @server.resource("deckbuilder://routing-guide")
@@ -1520,7 +1531,9 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             "because it returns the normalized account, inferred collection locator, and current personal decks. "
             "When the server is already connected through MCP OAuth, call login_archidekt without an account payload. "
             "When search_owned_cards returns personal_deck_usage, ask whether already-slotted cards may be reused. "
-            "Use search_archidekt_cards to resolve Archidekt card ids before deck or collection writes."
+            "Use search_archidekt_cards to resolve Archidekt card ids before deck or collection writes. "
+            "When the user requests sorting, prefer canonical filters such as `sort_by=unit_price` with "
+            "`sort_direction=desc` instead of shorthand `sort` strings."
         )
 
     @server.tool(

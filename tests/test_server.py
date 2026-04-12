@@ -27,6 +27,7 @@ from archidekt_commander_mcp.models import (
     ArchidektAccount,
     AuthenticatedAccount,
     CardResult,
+    CollectionSearchRequest,
     CollectionCardUpsert,
     CollectionCardRecord,
     CollectionLocator,
@@ -90,6 +91,16 @@ class HttpRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertIn("error", response.json())
 
+    def test_collection_search_request_normalizes_legacy_sort_alias(self) -> None:
+        request = CollectionSearchRequest.model_validate(
+            {
+                "collection": {"username": "tester"},
+                "filters": {"sort": "price_desc", "limit": 5},
+            }
+        )
+        self.assertEqual(request.filters.sort_by, "unit_price")
+        self.assertEqual(request.filters.sort_direction, "desc")
+
 
 class RuntimeSettingsEnvTests(unittest.TestCase):
     def test_reads_runtime_settings_from_environment(self) -> None:
@@ -120,6 +131,8 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("Connect Archidekt", html)
         self.assertIn("Test Auth Login", html)
         self.assertIn('const authEnabled = true;', html)
+        self.assertIn("sort_by: unit_price", html)
+        self.assertIn("sort_direction: desc", html)
 
 
 class FakeCollectionClient:

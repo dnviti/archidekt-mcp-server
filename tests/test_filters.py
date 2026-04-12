@@ -104,6 +104,10 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(price_filters.sort_by, "unit_price")
         self.assertEqual(price_filters.sort_direction, "desc")
 
+        legacy_price_filters = CardSearchFilters.model_validate({"sort": "price_desc"})
+        self.assertEqual(legacy_price_filters.sort_by, "unit_price")
+        self.assertEqual(legacy_price_filters.sort_direction, "desc")
+
         rarity_filters = CardSearchFilters(sort_by="rarity_asc")
         self.assertEqual(rarity_filters.sort_by, "rarity")
         self.assertEqual(rarity_filters.sort_direction, "asc")
@@ -111,6 +115,12 @@ class FilterTests(unittest.TestCase):
         cmc_filters = CardSearchFilters(sort_by="mana_value_desc")
         self.assertEqual(cmc_filters.sort_by, "cmc")
         self.assertEqual(cmc_filters.sort_direction, "desc")
+
+        explicit_direction_filters = CardSearchFilters.model_validate(
+            {"sort": "price", "direction": "descending"}
+        )
+        self.assertEqual(explicit_direction_filters.sort_by, "unit_price")
+        self.assertEqual(explicit_direction_filters.sort_direction, "desc")
 
     def test_sort_card_results_keeps_missing_values_last_for_descending_price(self) -> None:
         filters = CardSearchFilters(sort_by="price_desc")

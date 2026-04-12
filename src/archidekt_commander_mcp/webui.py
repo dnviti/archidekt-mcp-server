@@ -6,13 +6,6 @@ from .config import RuntimeSettings
 
 
 def render_home_page(settings: RuntimeSettings) -> str:
-    default_account = json.dumps(
-        {
-            "username": "your_archidekt_username",
-            "password": "your_archidekt_password",
-        },
-        indent=2,
-    )
     default_filters = json.dumps(
         {
             "type_includes": ["Instant"],
@@ -29,6 +22,32 @@ def render_home_page(settings: RuntimeSettings) -> str:
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Archidekt MCP Server</title>
+  <script>
+    (() => {{
+      const params = new URLSearchParams(window.location.search);
+      if (!window.opener || (!params.has("code") && !params.has("error"))) {{
+        return;
+      }}
+      try {{
+        window.opener.postMessage(
+          {{
+            type: "archidekt-oauth-callback",
+            code: params.get("code"),
+            state: params.get("state"),
+            error: params.get("error"),
+            error_description: params.get("error_description"),
+          }},
+          window.location.origin
+        );
+      }} catch (error) {{
+        console.error("Failed to notify opener about OAuth callback.", error);
+      }}
+      window.addEventListener("DOMContentLoaded", () => {{
+        document.body.innerHTML = '<main style="min-height:100vh;display:grid;place-items:center;font-family:Segoe UI,Helvetica Neue,sans-serif;background:#f7f3e8;color:#14281d;">Completing sign-in...</main>';
+      }});
+      setTimeout(() => window.close(), 80);
+    }})();
+  </script>
   <style>
     :root {{
       --ink: #14281d;
@@ -267,6 +286,34 @@ def render_home_page(settings: RuntimeSettings) -> str:
       font-weight: 600;
     }}
 
+    .auth-row {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.8rem;
+      padding: 0.9rem 1rem;
+      border-radius: 18px;
+      border: 1px solid rgba(20, 40, 29, 0.12);
+      background: rgba(255, 255, 255, 0.72);
+    }}
+
+    .auth-state {{
+      font-weight: 600;
+      color: var(--ink);
+    }}
+
+    .auth-state.connected {{
+      color: var(--forest);
+    }}
+
+    button:disabled {{
+      cursor: not-allowed;
+      opacity: 0.55;
+      transform: none;
+      box-shadow: none;
+    }}
+
     @media (max-width: 920px) {{
       .grid,
       .two-col {{
@@ -291,8 +338,8 @@ def render_home_page(settings: RuntimeSettings) -> str:
       <h1>Archidekt Commander Web UI</h1>
       <p>
         Stateless by default, with optional authenticated Archidekt access for private collections
-        and personal deck overlap checks, MCP OAuth sign-in for ChatGPT, and authenticated deck or collection writes. Every request still
-        carries its own explicit context.
+        and personal deck overlap checks, MCP OAuth sign-in for ChatGPT, and authenticated deck or collection writes.
+        This page can also connect through OAuth directly so authenticated users can test private API routes with their own Archidekt account.
       </p>
       <div class="badges">
         <div class="badge">MCP Endpoint: {mcp_path}</div>
@@ -307,11 +354,21 @@ def render_home_page(settings: RuntimeSettings) -> str:
         <h2>Collection Context</h2>
         <p class="hint">
           Provide exactly one of collection ID, public collection URL, or Archidekt username.
-          This object must be passed in every collection-related MCP tool call. Add an optional
-          authenticated account object when you need private decks, a private collection, or account writes.
-          If the MCP app is already connected through OAuth, the private MCP tools can omit `account`.
+          This object must be passed in every collection-related MCP tool call. Private deck access,
+          private collection access, and account writes come from the OAuth session instead of pasted credentials.
         </p>
         <div class="stack">
+          <div class="auth-row">
+            <div>
+              <div class="auth-state" id="auth-state">OAuth not connected.</div>
+              <div class="meta small" id="auth-meta">Connect Archidekt to test private account routes from this page.</div>
+            </div>
+            <div class="actions">
+              <button class="secondary" id="connect-auth">Connect Archidekt</button>
+              <button class="secondary" id="disconnect-auth">Disconnect</button>
+            </div>
+          </div>
+
           <div class="two-col">
             <label>
               Collection ID
@@ -338,11 +395,6 @@ def render_home_page(settings: RuntimeSettings) -> str:
           </label>
 
           <label>
-            Account JSON For Login And Private Data Access
-            <textarea id="account" placeholder='{{\n  "username": "your_archidekt_username",\n  "password": "your_archidekt_password"\n}}'>{default_account}</textarea>
-          </label>
-
-          <label>
             User Prompt To Send To The LLM
             <textarea id="prompt" placeholder="Build me an owned blue instant package for a Commander control deck."></textarea>
           </label>
@@ -354,12 +406,16 @@ def render_home_page(settings: RuntimeSettings) -> str:
 
           <div class="actions">
             <button class="primary" id="build-context">Generate LLM Context</button>
-            <button class="secondary" id="test-login">Test Login</button>
+            <button class="secondary" id="test-login">Test Auth Login</button>
             <button class="secondary" id="test-personal-decks">Test Personal Decks</button>
             <button class="secondary" id="test-overview">Test Overview</button>
             <button class="secondary" id="test-owned">Test Owned</button>
             <button class="accent" id="test-unowned">Test Unowned</button>
           </div>
+          <p class="meta small">
+            When OAuth is connected, the authenticated test buttons use your own Archidekt account through bearer auth.
+            Public collection tests also reuse that session automatically when it is present.
+          </p>
           <p class="meta small">
             Additional authenticated write routes are available at
             `/api/cards/search`, `/api/personal-deck-cards`, `/api/personal-decks/create`,
@@ -385,17 +441,6 @@ def render_home_page(settings: RuntimeSettings) -> str:
         <div class="code-card">
           <div class="code-header">
             <div>
-              <h2>Account JSON</h2>
-              <p class="meta small">Optional. Use this for login, private collections, personal deck overlap checks, and authenticated Archidekt writes when no MCP OAuth session is already active.</p>
-            </div>
-            <button class="copy-button" data-copy-target="account-json">Copy JSON</button>
-          </div>
-          <pre id="account-json"></pre>
-        </div>
-
-        <div class="code-card">
-          <div class="code-header">
-            <div>
               <h2>LLM Instructions</h2>
               <p class="meta small">Copy this block into the active prompt for the current request.</p>
             </div>
@@ -408,7 +453,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
           <div class="code-header">
             <div>
               <h2>API Test Result</h2>
-              <p class="meta small">These HTTP endpoints run the same logic used by the MCP tools. The visible buttons cover the read flow; the write routes listed above use the same server state and account contract.</p>
+              <p class="meta small">These HTTP endpoints run the same logic used by the MCP tools. When this page is connected through OAuth, private account flows reuse the page's authenticated Archidekt session.</p>
             </div>
             <button class="copy-button" data-copy-target="result">Copy Result</button>
           </div>
@@ -420,14 +465,372 @@ def render_home_page(settings: RuntimeSettings) -> str:
 
   <script>
     const collectionJsonEl = document.getElementById("collection-json");
-    const accountJsonEl = document.getElementById("account-json");
     const instructionsEl = document.getElementById("llm-instructions");
     const resultEl = document.getElementById("result");
     const statusEl = document.getElementById("status");
+    const authStateEl = document.getElementById("auth-state");
+    const authMetaEl = document.getElementById("auth-meta");
+    const connectButton = document.getElementById("connect-auth");
+    const disconnectButton = document.getElementById("disconnect-auth");
+    const testLoginButton = document.getElementById("test-login");
+    const testPersonalDecksButton = document.getElementById("test-personal-decks");
+    const authEnabled = {auth_enabled};
+    const oauthScope = {oauth_scope};
+    const mcpPath = {mcp_path_json};
+    const oauthStorageKey = "archidekt-webui-oauth-session";
 
     function cleanValue(value) {{
       const trimmed = value.trim();
       return trimmed.length ? trimmed : null;
+    }}
+
+    function encodeFormBody(values) {{
+      return new URLSearchParams(values).toString();
+    }}
+
+    function readStoredSession() {{
+      const raw = window.sessionStorage.getItem(oauthStorageKey);
+      if (!raw) {{
+        return null;
+      }}
+      try {{
+        return JSON.parse(raw);
+      }} catch (error) {{
+        window.sessionStorage.removeItem(oauthStorageKey);
+        return null;
+      }}
+    }}
+
+    function writeStoredSession(session) {{
+      window.sessionStorage.setItem(oauthStorageKey, JSON.stringify(session));
+    }}
+
+    function clearStoredSession() {{
+      window.sessionStorage.removeItem(oauthStorageKey);
+    }}
+
+    function randomString(byteLength = 32) {{
+      const bytes = new Uint8Array(byteLength);
+      window.crypto.getRandomValues(bytes);
+      return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+    }}
+
+    async function sha256Base64Url(value) {{
+      const digest = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+      const bytes = new Uint8Array(digest);
+      let binary = "";
+      bytes.forEach((byte) => {{
+        binary += String.fromCharCode(byte);
+      }});
+      return btoa(binary).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
+    }}
+
+    function callbackUrl() {{
+      const url = new URL(window.location.href);
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    }}
+
+    function resourceUrl() {{
+      return new URL(mcpPath, window.location.origin).toString();
+    }}
+
+    async function registerClient() {{
+      const response = await fetch("/register", {{
+        method: "POST",
+        headers: {{
+          "Content-Type": "application/json"
+        }},
+        body: JSON.stringify({{
+          redirect_uris: [callbackUrl()],
+          token_endpoint_auth_method: "none",
+          grant_types: ["authorization_code", "refresh_token"],
+          response_types: ["code"],
+          scope: oauthScope,
+          client_name: "Archidekt Web UI"
+        }})
+      }});
+      if (!response.ok) {{
+        throw new Error(await response.text());
+      }}
+      return response.json();
+    }}
+
+    function waitForOAuthCallback(expectedState, popup) {{
+      return new Promise((resolve, reject) => {{
+        const timeoutId = window.setTimeout(() => {{
+          cleanup();
+          reject(new Error("Timed out while waiting for the Archidekt OAuth callback."));
+        }}, 5 * 60 * 1000);
+
+        const closePoll = window.setInterval(() => {{
+          if (popup.closed) {{
+            cleanup();
+            reject(new Error("The OAuth popup was closed before the sign-in completed."));
+          }}
+        }}, 500);
+
+        function cleanup() {{
+          window.clearTimeout(timeoutId);
+          window.clearInterval(closePoll);
+          window.removeEventListener("message", handleMessage);
+        }}
+
+        function handleMessage(event) {{
+          if (event.origin !== window.location.origin) {{
+            return;
+          }}
+          const payload = event.data || {{}};
+          if (payload.type !== "archidekt-oauth-callback") {{
+            return;
+          }}
+          if (payload.state !== expectedState) {{
+            cleanup();
+            reject(new Error("OAuth state mismatch while completing the sign-in flow."));
+            return;
+          }}
+          cleanup();
+          resolve(payload);
+        }}
+
+        window.addEventListener("message", handleMessage);
+      }});
+    }}
+
+    async function exchangeAuthorizationCode(clientId, code, verifier) {{
+      const response = await fetch("/token", {{
+        method: "POST",
+        headers: {{
+          "Content-Type": "application/x-www-form-urlencoded"
+        }},
+        body: encodeFormBody({{
+          grant_type: "authorization_code",
+          client_id: clientId,
+          code,
+          redirect_uri: callbackUrl(),
+          code_verifier: verifier
+        }})
+      }});
+      if (!response.ok) {{
+        throw new Error(await response.text());
+      }}
+      return response.json();
+    }}
+
+    async function refreshAccessToken(session) {{
+      if (!session?.client_id || !session?.refresh_token) {{
+        return null;
+      }}
+      const response = await fetch("/token", {{
+        method: "POST",
+        headers: {{
+          "Content-Type": "application/x-www-form-urlencoded"
+        }},
+        body: encodeFormBody({{
+          grant_type: "refresh_token",
+          client_id: session.client_id,
+          refresh_token: session.refresh_token
+        }})
+      }});
+      if (!response.ok) {{
+        throw new Error(await response.text());
+      }}
+      const payload = await response.json();
+      const refreshed = {{
+        ...session,
+        access_token: payload.access_token,
+        refresh_token: payload.refresh_token || session.refresh_token,
+        expires_at: Date.now() + ((payload.expires_in || 3600) * 1000),
+        scope: payload.scope || session.scope
+      }};
+      writeStoredSession(refreshed);
+      return refreshed.access_token;
+    }}
+
+    async function revokeSession(session) {{
+      if (!session?.client_id) {{
+        return;
+      }}
+      const tokens = [
+        [session.access_token, "access_token"],
+        [session.refresh_token, "refresh_token"]
+      ];
+      for (const [token, hint] of tokens) {{
+        if (!token) {{
+          continue;
+        }}
+        try {{
+          await fetch("/revoke", {{
+            method: "POST",
+            headers: {{
+              "Content-Type": "application/x-www-form-urlencoded"
+            }},
+            body: encodeFormBody({{
+              client_id: session.client_id,
+              token,
+              token_type_hint: hint
+            }})
+          }});
+        }} catch (error) {{
+          console.warn("Best-effort token revocation failed.", error);
+        }}
+      }}
+    }}
+
+    async function getValidAccessToken() {{
+      if (!authEnabled) {{
+        return null;
+      }}
+      const session = readStoredSession();
+      if (!session?.access_token) {{
+        return null;
+      }}
+      if (!session.expires_at || (Date.now() + 30000) < session.expires_at) {{
+        return session.access_token;
+      }}
+      try {{
+        return await refreshAccessToken(session);
+      }} catch (error) {{
+        clearStoredSession();
+        updateAuthState();
+        throw error;
+      }}
+    }}
+
+    async function fetchAuthenticatedSummary() {{
+      const token = await getValidAccessToken();
+      if (!token) {{
+        return null;
+      }}
+      const response = await fetch("/api/login", {{
+        method: "POST",
+        headers: {{
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + token
+        }},
+        body: JSON.stringify({{}})
+      }});
+      if (!response.ok) {{
+        throw new Error(await response.text());
+      }}
+      return response.json();
+    }}
+
+    async function connectAuth() {{
+      if (!authEnabled) {{
+        throw new Error("OAuth is not enabled on this deployment.");
+      }}
+      connectButton.disabled = true;
+      statusEl.textContent = "Preparing OAuth sign-in...";
+      try {{
+        const registeredClient = await registerClient();
+        const state = randomString(20);
+        const verifier = randomString(48);
+        const challenge = await sha256Base64Url(verifier);
+        const authorizeUrl = new URL("/authorize", window.location.origin);
+        authorizeUrl.searchParams.set("response_type", "code");
+        authorizeUrl.searchParams.set("client_id", registeredClient.client_id);
+        authorizeUrl.searchParams.set("redirect_uri", callbackUrl());
+        authorizeUrl.searchParams.set("scope", oauthScope);
+        authorizeUrl.searchParams.set("state", state);
+        authorizeUrl.searchParams.set("resource", resourceUrl());
+        authorizeUrl.searchParams.set("code_challenge", challenge);
+        authorizeUrl.searchParams.set("code_challenge_method", "S256");
+
+        const popup = window.open(
+          authorizeUrl.toString(),
+          "archidekt-oauth",
+          "popup=yes,width=560,height=760"
+        );
+        if (!popup) {{
+          throw new Error("The OAuth popup was blocked. Allow popups for this site and try again.");
+        }}
+
+        statusEl.textContent = "Complete the Archidekt sign-in in the popup window.";
+        const callbackPayload = await waitForOAuthCallback(state, popup);
+        if (callbackPayload.error) {{
+          throw new Error(callbackPayload.error_description || callbackPayload.error);
+        }}
+        if (!callbackPayload.code) {{
+          throw new Error("OAuth completed without an authorization code.");
+        }}
+
+        const tokenPayload = await exchangeAuthorizationCode(
+          registeredClient.client_id,
+          callbackPayload.code,
+          verifier
+        );
+        writeStoredSession({{
+          client_id: registeredClient.client_id,
+          access_token: tokenPayload.access_token,
+          refresh_token: tokenPayload.refresh_token || null,
+          expires_at: Date.now() + ((tokenPayload.expires_in || 3600) * 1000),
+          scope: tokenPayload.scope || oauthScope
+        }});
+
+        await updateAuthState(true);
+        statusEl.textContent = "Archidekt OAuth connected.";
+      }} finally {{
+        connectButton.disabled = false;
+      }}
+    }}
+
+    async function disconnectAuth() {{
+      const session = readStoredSession();
+      disconnectButton.disabled = true;
+      try {{
+        await revokeSession(session);
+      }} finally {{
+        clearStoredSession();
+        disconnectButton.disabled = false;
+        await updateAuthState();
+        statusEl.textContent = "Archidekt OAuth disconnected.";
+      }}
+    }}
+
+    async function updateAuthState(silent = false) {{
+      const session = readStoredSession();
+      if (!authEnabled) {{
+        authStateEl.textContent = "OAuth not available on this deployment.";
+        authStateEl.classList.remove("connected");
+        authMetaEl.textContent = "Enable MCP OAuth on the server to test private account APIs from the browser.";
+        connectButton.disabled = true;
+        disconnectButton.disabled = true;
+        testLoginButton.disabled = true;
+        testPersonalDecksButton.disabled = true;
+        return;
+      }}
+
+      connectButton.disabled = false;
+      disconnectButton.disabled = !session;
+      testLoginButton.disabled = !session;
+      testPersonalDecksButton.disabled = !session;
+
+      if (!session) {{
+        authStateEl.textContent = "OAuth not connected.";
+        authStateEl.classList.remove("connected");
+        authMetaEl.textContent = "Connect Archidekt to test private account routes from this page.";
+        return;
+      }}
+
+      try {{
+        const summary = await fetchAuthenticatedSummary();
+        const deckCount = summary?.personal_decks?.total_decks;
+        const username = summary?.account?.username || "authenticated user";
+        authStateEl.textContent = "Connected as " + username;
+        authStateEl.classList.add("connected");
+        authMetaEl.textContent = deckCount == null
+          ? "Authenticated private API access is available."
+          : "Authenticated private API access is available. Personal decks detected: " + deckCount + ".";
+      }} catch (error) {{
+        if (!silent) {{
+          console.warn("Failed to refresh OAuth status.", error);
+        }}
+        authStateEl.textContent = "Saved OAuth session needs attention.";
+        authStateEl.classList.remove("connected");
+        authMetaEl.textContent = "Reconnect Archidekt if authenticated API tests start failing.";
+      }}
     }}
 
     function readCollection() {{
@@ -458,34 +861,19 @@ def render_home_page(settings: RuntimeSettings) -> str:
       return JSON.parse(raw);
     }}
 
-    function readAccount() {{
-      const raw = document.getElementById("account").value.trim();
-      if (!raw) {{
-        return null;
-      }}
-      return JSON.parse(raw);
-    }}
-
-    function buildInstructions(collection, account, prompt) {{
+    function buildInstructions(collection, prompt) {{
       const promptLine = prompt.trim()
         ? "\\nUser request: " + prompt.trim()
         : "";
-      const accountSection = account
-        ? [
-            "Optional authenticated `account` object:",
-            JSON.stringify(account, null, 2),
-          ]
-        : [];
 
       return [
         "Use this MCP server in a stateless way.",
         "Pass the following `collection` object in every tool call:",
         JSON.stringify(collection, null, 2),
-        ...accountSection,
         "Rules:",
         "- Never assume the collection remains in memory between requests.",
-        "- If private collections or personal decks matter, call `login_archidekt` first. Its response includes the normalized `account`, inferred `collection`, and current personal deck list when Archidekt returns it.",
-        "- If the MCP app is already connected through OAuth, call `login_archidekt` without an `account` payload.",
+        "- If private collections or personal decks matter, authenticate through MCP OAuth first, then call `login_archidekt` without an `account` payload.",
+        "- Reuse the active OAuth-backed Archidekt identity for private deck reads and writes instead of passing credentials manually.",
         "- Use `get_collection_overview` whenever you need context before making recommendations.",
         "- Use `list_personal_decks` when you need the user's own decks.",
         "- Use `search_archidekt_cards` to resolve Archidekt `card_id` values before deck or collection writes.",
@@ -517,22 +905,28 @@ def render_home_page(settings: RuntimeSettings) -> str:
 
     function updateOutputs() {{
       const collection = readCollection();
-      const account = readAccount();
       const prompt = document.getElementById("prompt").value;
       collectionJsonEl.textContent = JSON.stringify(collection, null, 2);
-      accountJsonEl.textContent = account ? JSON.stringify(account, null, 2) : "";
-      instructionsEl.textContent = buildInstructions(collection, account, prompt);
+      instructionsEl.textContent = buildInstructions(collection, prompt);
     }}
 
-    async function runRequest(endpoint, body) {{
+    async function runRequest(endpoint, body, requireAuth = false) {{
       statusEl.textContent = "Request in progress...";
       resultEl.textContent = "";
       try {{
+        const token = await getValidAccessToken();
+        if (requireAuth && !token) {{
+          throw new Error("Connect Archidekt with OAuth before testing this authenticated API.");
+        }}
+        const headers = {{
+          "Content-Type": "application/json"
+        }};
+        if (token) {{
+          headers["Authorization"] = "Bearer " + token;
+        }}
         const response = await fetch(endpoint, {{
           method: "POST",
-          headers: {{
-            "Content-Type": "application/json"
-          }},
+          headers,
           body: JSON.stringify(body)
         }});
 
@@ -563,33 +957,49 @@ def render_home_page(settings: RuntimeSettings) -> str:
     document.getElementById("build-context").addEventListener("click", () => {{
       try {{
         updateOutputs();
-        readAccount();
         readFilters();
         statusEl.textContent = "LLM context updated.";
       }} catch (error) {{
-        statusEl.textContent = "Account JSON or filters JSON is invalid.";
+        statusEl.textContent = "Filters JSON is invalid.";
         resultEl.textContent = String(error);
       }}
     }});
 
-    document.getElementById("test-login").addEventListener("click", async () => {{
+    connectButton.addEventListener("click", async () => {{
       try {{
-        const account = readAccount();
-        updateOutputs();
-        await runRequest("/api/login", {{ account }});
+        await connectAuth();
       }} catch (error) {{
-        statusEl.textContent = "Account JSON is invalid.";
+        statusEl.textContent = "OAuth sign-in failed.";
+        resultEl.textContent = String(error);
+        await updateAuthState(true);
+      }}
+    }});
+
+    disconnectButton.addEventListener("click", async () => {{
+      try {{
+        await disconnectAuth();
+      }} catch (error) {{
+        statusEl.textContent = "OAuth disconnect failed.";
         resultEl.textContent = String(error);
       }}
     }});
 
-    document.getElementById("test-personal-decks").addEventListener("click", async () => {{
+    testLoginButton.addEventListener("click", async () => {{
       try {{
-        const account = readAccount();
         updateOutputs();
-        await runRequest("/api/personal-decks", {{ account }});
+        await runRequest("/api/login", {{}}, true);
       }} catch (error) {{
-        statusEl.textContent = "Account JSON is invalid.";
+        statusEl.textContent = "Authenticated login test failed.";
+        resultEl.textContent = String(error);
+      }}
+    }});
+
+    testPersonalDecksButton.addEventListener("click", async () => {{
+      try {{
+        updateOutputs();
+        await runRequest("/api/personal-decks", {{}}, true);
+      }} catch (error) {{
+        statusEl.textContent = "Authenticated deck test failed.";
         resultEl.textContent = String(error);
       }}
     }});
@@ -597,9 +1007,8 @@ def render_home_page(settings: RuntimeSettings) -> str:
     document.getElementById("test-overview").addEventListener("click", async () => {{
       try {{
         const collection = readCollection();
-        const account = readAccount();
         updateOutputs();
-        await runRequest("/api/overview", {{ collection, account }});
+        await runRequest("/api/overview", {{ collection }});
       }} catch (error) {{
         statusEl.textContent = "Collection input is invalid.";
         resultEl.textContent = String(error);
@@ -609,10 +1018,9 @@ def render_home_page(settings: RuntimeSettings) -> str:
     document.getElementById("test-owned").addEventListener("click", async () => {{
       try {{
         const collection = readCollection();
-        const account = readAccount();
         const filters = readFilters();
         updateOutputs();
-        await runRequest("/api/search-owned", {{ collection, filters, account }});
+        await runRequest("/api/search-owned", {{ collection, filters }});
       }} catch (error) {{
         statusEl.textContent = "Request input is invalid.";
         resultEl.textContent = String(error);
@@ -622,10 +1030,9 @@ def render_home_page(settings: RuntimeSettings) -> str:
     document.getElementById("test-unowned").addEventListener("click", async () => {{
       try {{
         const collection = readCollection();
-        const account = readAccount();
         const filters = readFilters();
         updateOutputs();
-        await runRequest("/api/search-unowned", {{ collection, filters, account }});
+        await runRequest("/api/search-unowned", {{ collection, filters }});
       }} catch (error) {{
         statusEl.textContent = "Request input is invalid.";
         resultEl.textContent = String(error);
@@ -641,14 +1048,17 @@ def render_home_page(settings: RuntimeSettings) -> str:
     }});
 
     updateOutputs();
+    updateAuthState(true);
   </script>
 </body>
 </html>
 """.format(
+        auth_enabled=str(settings.auth_enabled).lower(),
         cache_ttl=settings.cache_ttl_seconds,
-        default_account=default_account,
         default_filters=default_filters,
         mcp_path=settings.streamable_http_path,
+        mcp_path_json=json.dumps(settings.streamable_http_path),
+        oauth_scope=json.dumps("archidekt.account"),
         stateless_http="yes" if settings.stateless_http else "no",
         transport=settings.transport,
     )

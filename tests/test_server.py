@@ -35,6 +35,7 @@ from archidekt_commander_mcp.models import (
     PersonalDeckSummary,
 )
 from archidekt_commander_mcp.server import DeckbuildingService, PersonalDeckUsageSnapshot, create_server
+from archidekt_commander_mcp.webui import render_home_page
 
 
 class CollectionLocatorTests(unittest.TestCase):
@@ -110,6 +111,15 @@ class RuntimeSettingsEnvTests(unittest.TestCase):
         self.assertEqual(settings.redis_url, "redis://redis:6379/5")
         self.assertEqual(settings.cache_ttl_seconds, 1234)
         self.assertEqual(settings.personal_deck_cache_ttl_seconds, 222)
+
+
+class WebUiTests(unittest.TestCase):
+    def test_oauth_enabled_page_removes_manual_account_json_and_shows_oauth_controls(self) -> None:
+        html = render_home_page(RuntimeSettings(auth_enabled=True))
+        self.assertNotIn("Account JSON", html)
+        self.assertIn("Connect Archidekt", html)
+        self.assertIn("Test Auth Login", html)
+        self.assertIn('const authEnabled = true;', html)
 
 
 class FakeCollectionClient:

@@ -183,16 +183,15 @@ Removal
 The bundled Web UI is fully in English and is meant to help you:
 
 - enter a public Archidekt collection locator
-- paste optional authenticated `account` JSON
-- test the same flows even when no MCP OAuth session is present
+- connect an Archidekt account through the same OAuth flow used by the MCP server
 - generate the exact `collection` JSON for MCP tool calls
 - generate an LLM instruction block for the current request
-- test login and personal deck listing over HTTP
+- test authenticated login and personal deck listing over HTTP with the connected OAuth session
 - test overview, owned, and unowned searches over HTTP
 - inspect the authenticated write endpoints available for card lookup, deck edits, and collection upserts
 - copy generated JSON, instructions, and API responses with one click
 
-The UI does not store user state. Every interaction is rebuilt from the current request.
+The server-side UI remains stateless. When OAuth is enabled on the deployment, the browser page keeps the temporary OAuth session in `sessionStorage` so it can reuse the bearer token for private API tests without any pasted credential JSON.
 
 ## Local Development
 

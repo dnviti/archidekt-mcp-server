@@ -6,6 +6,13 @@ from .config import RuntimeSettings
 
 
 def render_home_page(settings: RuntimeSettings) -> str:
+    default_account = json.dumps(
+        {
+            "username": "your_archidekt_username",
+            "password": "your_archidekt_password",
+        },
+        indent=2,
+    )
     default_filters = json.dumps(
         {
             "type_includes": ["Instant"],
@@ -280,12 +287,12 @@ def render_home_page(settings: RuntimeSettings) -> str:
 <body>
   <main class="shell">
     <section class="hero">
-      <div class="eyebrow">Stateless Public MCP</div>
+      <div class="eyebrow">Stateless Deckbuilding MCP</div>
       <h1>Archidekt Commander Web UI</h1>
       <p>
-        No login, no user persistence, and no user-specific environment variables.
-        Every request must carry the Archidekt collection locator, and the server handles
-        the request deterministically from that context.
+        Stateless by default, with optional authenticated Archidekt access for private collections
+        personal deck overlap checks, and authenticated deck or collection writes. Every request still
+        carries its own explicit context.
       </p>
       <div class="badges">
         <div class="badge">MCP Endpoint: {mcp_path}</div>
@@ -300,7 +307,8 @@ def render_home_page(settings: RuntimeSettings) -> str:
         <h2>Collection Context</h2>
         <p class="hint">
           Provide exactly one of collection ID, public collection URL, or Archidekt username.
-          This object must be passed in every MCP tool call.
+          This object must be passed in every collection-related MCP tool call. Add an optional
+          authenticated account object when you need private decks, a private collection, or account writes.
         </p>
         <div class="stack">
           <div class="two-col">
@@ -329,6 +337,11 @@ def render_home_page(settings: RuntimeSettings) -> str:
           </label>
 
           <label>
+            Account JSON For Login And Private Data Access
+            <textarea id="account" placeholder='{{\n  "username": "your_archidekt_username",\n  "password": "your_archidekt_password"\n}}'>{default_account}</textarea>
+          </label>
+
+          <label>
             User Prompt To Send To The LLM
             <textarea id="prompt" placeholder="Build me an owned blue instant package for a Commander control deck."></textarea>
           </label>
@@ -340,10 +353,18 @@ def render_home_page(settings: RuntimeSettings) -> str:
 
           <div class="actions">
             <button class="primary" id="build-context">Generate LLM Context</button>
+            <button class="secondary" id="test-login">Test Login</button>
+            <button class="secondary" id="test-personal-decks">Test Personal Decks</button>
             <button class="secondary" id="test-overview">Test Overview</button>
             <button class="secondary" id="test-owned">Test Owned</button>
             <button class="accent" id="test-unowned">Test Unowned</button>
           </div>
+          <p class="meta small">
+            Additional authenticated write routes are available at
+            `/api/cards/search`, `/api/personal-deck-cards`, `/api/personal-decks/create`,
+            `/api/personal-decks/update`, `/api/personal-decks/delete`,
+            `/api/personal-decks/modify-cards`, and `/api/collection/upsert`.
+          </p>
           <div class="status" id="status"></div>
         </div>
       </article>
@@ -363,6 +384,17 @@ def render_home_page(settings: RuntimeSettings) -> str:
         <div class="code-card">
           <div class="code-header">
             <div>
+              <h2>Account JSON</h2>
+              <p class="meta small">Optional. Use this for login, private collections, personal deck overlap checks, and authenticated Archidekt writes.</p>
+            </div>
+            <button class="copy-button" data-copy-target="account-json">Copy JSON</button>
+          </div>
+          <pre id="account-json"></pre>
+        </div>
+
+        <div class="code-card">
+          <div class="code-header">
+            <div>
               <h2>LLM Instructions</h2>
               <p class="meta small">Copy this block into the active prompt for the current request.</p>
             </div>
@@ -375,7 +407,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
           <div class="code-header">
             <div>
               <h2>API Test Result</h2>
-              <p class="meta small">These HTTP endpoints run the same logic used by the MCP tools.</p>
+              <p class="meta small">These HTTP endpoints run the same logic used by the MCP tools. The visible buttons cover the read flow; the write routes listed above use the same server state and account contract.</p>
             </div>
             <button class="copy-button" data-copy-target="result">Copy Result</button>
           </div>
@@ -387,6 +419,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
 
   <script>
     const collectionJsonEl = document.getElementById("collection-json");
+    const accountJsonEl = document.getElementById("account-json");
     const instructionsEl = document.getElementById("llm-instructions");
     const resultEl = document.getElementById("result");
     const statusEl = document.getElementById("status");
@@ -424,20 +457,41 @@ def render_home_page(settings: RuntimeSettings) -> str:
       return JSON.parse(raw);
     }}
 
-    function buildInstructions(collection, prompt) {{
+    function readAccount() {{
+      const raw = document.getElementById("account").value.trim();
+      if (!raw) {{
+        return null;
+      }}
+      return JSON.parse(raw);
+    }}
+
+    function buildInstructions(collection, account, prompt) {{
       const promptLine = prompt.trim()
         ? "\\nUser request: " + prompt.trim()
         : "";
+      const accountSection = account
+        ? [
+            "Optional authenticated `account` object:",
+            JSON.stringify(account, null, 2),
+          ]
+        : [];
 
       return [
         "Use this MCP server in a stateless way.",
         "Pass the following `collection` object in every tool call:",
         JSON.stringify(collection, null, 2),
+        ...accountSection,
         "Rules:",
         "- Never assume the collection remains in memory between requests.",
+        "- If private collections or personal decks matter, call `login_archidekt` first and then reuse the returned `account` object.",
         "- Use `get_collection_overview` whenever you need context before making recommendations.",
+        "- Use `list_personal_decks` when you need the user's own decks.",
+        "- Use `search_archidekt_cards` to resolve Archidekt `card_id` values before deck or collection writes.",
+        "- Use `get_personal_deck_cards` before editing an existing deck so you have fresh `deck_relation_id` values.",
         "- Use `search_owned_cards` only for owned cards.",
         "- Use `search_unowned_cards` only for missing cards.",
+        "- When `search_owned_cards` returns `personal_deck_usage`, ask the user whether cards already committed to other decks may be reused.",
+        "- When `search_owned_cards` returns `archidekt_card_ids`, reuse those ids for deck or collection writes.",
         "Default response format:",
         "- Use this structure unless the user explicitly asks for a different format.",
         "- Start with a short strategy guide that explains the deck plan, key synergies, pacing, and win conditions.",
@@ -461,9 +515,11 @@ def render_home_page(settings: RuntimeSettings) -> str:
 
     function updateOutputs() {{
       const collection = readCollection();
+      const account = readAccount();
       const prompt = document.getElementById("prompt").value;
       collectionJsonEl.textContent = JSON.stringify(collection, null, 2);
-      instructionsEl.textContent = buildInstructions(collection, prompt);
+      accountJsonEl.textContent = account ? JSON.stringify(account, null, 2) : "";
+      instructionsEl.textContent = buildInstructions(collection, account, prompt);
     }}
 
     async function runRequest(endpoint, body) {{
@@ -505,10 +561,33 @@ def render_home_page(settings: RuntimeSettings) -> str:
     document.getElementById("build-context").addEventListener("click", () => {{
       try {{
         updateOutputs();
+        readAccount();
         readFilters();
         statusEl.textContent = "LLM context updated.";
       }} catch (error) {{
-        statusEl.textContent = "Filters JSON is invalid.";
+        statusEl.textContent = "Account JSON or filters JSON is invalid.";
+        resultEl.textContent = String(error);
+      }}
+    }});
+
+    document.getElementById("test-login").addEventListener("click", async () => {{
+      try {{
+        const account = readAccount();
+        updateOutputs();
+        await runRequest("/api/login", {{ account }});
+      }} catch (error) {{
+        statusEl.textContent = "Account JSON is invalid.";
+        resultEl.textContent = String(error);
+      }}
+    }});
+
+    document.getElementById("test-personal-decks").addEventListener("click", async () => {{
+      try {{
+        const account = readAccount();
+        updateOutputs();
+        await runRequest("/api/personal-decks", {{ account }});
+      }} catch (error) {{
+        statusEl.textContent = "Account JSON is invalid.";
         resultEl.textContent = String(error);
       }}
     }});
@@ -516,8 +595,9 @@ def render_home_page(settings: RuntimeSettings) -> str:
     document.getElementById("test-overview").addEventListener("click", async () => {{
       try {{
         const collection = readCollection();
+        const account = readAccount();
         updateOutputs();
-        await runRequest("/api/overview", {{ collection }});
+        await runRequest("/api/overview", {{ collection, account }});
       }} catch (error) {{
         statusEl.textContent = "Collection input is invalid.";
         resultEl.textContent = String(error);
@@ -527,9 +607,10 @@ def render_home_page(settings: RuntimeSettings) -> str:
     document.getElementById("test-owned").addEventListener("click", async () => {{
       try {{
         const collection = readCollection();
+        const account = readAccount();
         const filters = readFilters();
         updateOutputs();
-        await runRequest("/api/search-owned", {{ collection, filters }});
+        await runRequest("/api/search-owned", {{ collection, filters, account }});
       }} catch (error) {{
         statusEl.textContent = "Request input is invalid.";
         resultEl.textContent = String(error);
@@ -539,9 +620,10 @@ def render_home_page(settings: RuntimeSettings) -> str:
     document.getElementById("test-unowned").addEventListener("click", async () => {{
       try {{
         const collection = readCollection();
+        const account = readAccount();
         const filters = readFilters();
         updateOutputs();
-        await runRequest("/api/search-unowned", {{ collection, filters }});
+        await runRequest("/api/search-unowned", {{ collection, filters, account }});
       }} catch (error) {{
         statusEl.textContent = "Request input is invalid.";
         resultEl.textContent = String(error);
@@ -562,6 +644,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
 </html>
 """.format(
         cache_ttl=settings.cache_ttl_seconds,
+        default_account=default_account,
         default_filters=default_filters,
         mcp_path=settings.streamable_http_path,
         stateless_http="yes" if settings.stateless_http else "no",

@@ -6,6 +6,7 @@ import re
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 import redis.asyncio as redis_async
@@ -18,7 +19,21 @@ from .filtering import (
     normalize_color_symbols,
     scryfall_price_key,
 )
-from .models import CardSearchFilters, CollectionCardRecord, CollectionLocator, CollectionSnapshot
+from .models import (
+    ArchidektAccount,
+    ArchidektCardReference,
+    ArchidektCardSearchFilters,
+    AuthenticatedAccount,
+    CardSearchFilters,
+    CollectionCardUpsert,
+    CollectionCardRecord,
+    CollectionLocator,
+    CollectionSnapshot,
+    PersonalDeckCardMutation,
+    PersonalDeckCreateInput,
+    PersonalDeckSummary,
+    PersonalDeckUpdateInput,
+)
 
 
 NEXT_DATA_PATTERN = re.compile(
@@ -27,6 +42,19 @@ NEXT_DATA_PATTERN = re.compile(
 )
 COLLECTION_LINK_PATTERN = re.compile(r"/collection/v2/(\d+)")
 LOGGER = logging.getLogger("archidekt_commander_mcp.clients")
+
+
+def _auth_headers(token: str | None) -> dict[str, str]:
+    if not token:
+        return {}
+    return {"Authorization": f"JWT {token}"}
+
+
+def _json_headers(token: str | None) -> dict[str, str]:
+    headers = _auth_headers(token)
+    headers["Accept"] = "application/json"
+    headers["Content-Type"] = "application/json"
+    return headers
 
 
 class ArchidektPublicCollectionClient:
@@ -62,14 +90,23 @@ class ArchidektPublicCollectionClient:
         LOGGER.info("Resolved Archidekt collection id %s from profile", match.group(1))
         return int(match.group(1))
 
-    async def fetch_snapshot(self, collection: CollectionLocator) -> CollectionSnapshot:
+    async def fetch_snapshot(
+        self,
+        collection: CollectionLocator,
+        auth_token: str | None = None,
+    ) -> CollectionSnapshot:
         collection_id = await self.resolve_collection_id(collection)
         LOGGER.info(
             "Starting Archidekt collection sync for locator=%s game=%s",
             collection.display_locator,
             collection.game,
         )
-        first_page = await self._fetch_collection_page(collection_id, game=collection.game, page=1)
+        first_page = await self._fetch_collection_page(
+            collection_id,
+            game=collection.game,
+            page=1,
+            auth_token=auth_token,
+        )
         page_props = first_page["pageProps"]
 
         total_pages = int(page_props["totalPages"])
@@ -84,6 +121,7 @@ class ArchidektPublicCollectionClient:
                 collection_id,
                 game=collection.game,
                 page=page_number,
+                auth_token=auth_token,
             )
             page_records = self._extract_records(page_payload)
             all_records.extend(page_records)
@@ -117,7 +155,13 @@ class ArchidektPublicCollectionClient:
         )
         return snapshot
 
-    async def _fetch_collection_page(self, collection_id: int, game: int, page: int) -> dict[str, Any]:
+    async def _fetch_collection_page(
+        self,
+        collection_id: int,
+        game: int,
+        page: int,
+        auth_token: str | None = None,
+    ) -> dict[str, Any]:
         LOGGER.info(
             "Requesting Archidekt collection page collection_id=%s page=%s game=%s",
             collection_id,
@@ -127,6 +171,7 @@ class ArchidektPublicCollectionClient:
         response = await self.http_client.get(
             f"{self.settings.normalized_archidekt_base_url}/collection/v2/{collection_id}",
             params={"game": game, "page": page},
+            headers=_auth_headers(auth_token),
         )
         response.raise_for_status()
 
@@ -194,6 +239,7 @@ class ArchidektPublicCollectionClient:
                     set_name=card.get("set"),
                     commander_legal=_normalize_legality(legalities.get("commander")),
                     oracle_id=card.get("oracleCardUid"),
+                    card_id=_safe_int(card.get("id")),
                     printing_id=card.get("uid"),
                     edhrec_rank=_safe_int(card.get("edhrecRank")),
                     image_uri=card.get("imgurl") or None,
@@ -341,6 +387,440 @@ class CollectionCache:
             await self.redis.delete(redis_key)
         except RedisError as error:
             LOGGER.warning("Failed to delete invalid Redis cache key %s: %s", redis_key, error)
+
+    async def invalidate_snapshot(self, collection: CollectionLocator) -> None:
+        await self._delete_key(self._redis_key(collection.cache_key))
+
+
+class ArchidektAuthenticatedClient:
+    def __init__(self, http_client: httpx.AsyncClient, settings: RuntimeSettings) -> None:
+        self.http_client = http_client
+        self.settings = settings
+
+    async def login(self, account: ArchidektAccount) -> AuthenticatedAccount:
+        if account.token and account.password is None:
+            return AuthenticatedAccount(
+                token=account.token,
+                username=account.username,
+                user_id=account.user_id,
+            )
+
+        payload: dict[str, Any] = {"password": account.password}
+        if account.email:
+            payload["email"] = account.email
+        else:
+            payload["username"] = account.username
+
+        LOGGER.info("Logging into Archidekt with %s", account.display_identity)
+        response = await self.http_client.post(
+            f"{self.settings.normalized_archidekt_base_url}/api/rest-auth/login/",
+            json=payload,
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+        )
+        response.raise_for_status()
+
+        response_payload = response.json()
+        user = response_payload.get("user") or {}
+        token = response_payload.get("token")
+
+        if not token:
+            raise RuntimeError("Archidekt login did not return an access token.")
+
+        return AuthenticatedAccount(
+            token=str(token),
+            username=_compact_text(user.get("username")),
+            user_id=_safe_int(user.get("id")),
+        )
+
+    async def resolve_account(self, account: ArchidektAccount) -> AuthenticatedAccount:
+        if not account.token:
+            return await self.login(account)
+
+        if account.username or account.user_id is not None:
+            return AuthenticatedAccount(
+                token=account.token,
+                username=account.username,
+                user_id=account.user_id,
+            )
+
+        recent_decks = await self._fetch_curated_self(account.token)
+        inferred_username = recent_decks[0].owner_username if recent_decks else None
+        inferred_user_id = recent_decks[0].owner_id if recent_decks else None
+        return AuthenticatedAccount(
+            token=account.token,
+            username=inferred_username,
+            user_id=inferred_user_id,
+        )
+
+    async def list_personal_decks(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        page_size: int = 100,
+    ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
+        resolved = await self._coerce_account(account)
+
+        recent_decks = await self._fetch_curated_self(resolved.token)
+        if resolved.username is None and recent_decks:
+            resolved = resolved.model_copy(
+                update={
+                    "username": recent_decks[0].owner_username,
+                    "user_id": recent_decks[0].owner_id,
+                }
+            )
+
+        if not resolved.username:
+            return resolved, recent_decks
+
+        next_url = (
+            f"{self.settings.normalized_archidekt_base_url}/api/decks/v3/?"
+            + urlencode(
+                {
+                    "ownerUsername": resolved.username,
+                    "showAll": "true",
+                    "page": 1,
+                    "pageSize": page_size,
+                }
+            )
+        )
+        decks: list[PersonalDeckSummary] = []
+        while next_url:
+            response = await self.http_client.get(next_url, headers=_auth_headers(resolved.token))
+            response.raise_for_status()
+            payload = response.json()
+            decks.extend(
+                self._map_personal_deck_summary(item) for item in (payload.get("results") or [])
+            )
+            next_url = _normalize_next_url(
+                payload.get("next"),
+                self.settings.normalized_archidekt_base_url,
+            )
+
+        if not decks and recent_decks:
+            decks = recent_decks
+
+        return resolved, _dedupe_personal_decks(decks)
+
+    async def search_cards(
+        self,
+        filters: ArchidektCardSearchFilters,
+    ) -> tuple[list[ArchidektCardReference], int | None, bool | None]:
+        params: dict[str, Any] = {"page": filters.page, "game": filters.game}
+        if filters.exact_name:
+            params["name"] = filters.exact_name
+            params["exact"] = ""
+        elif filters.query:
+            params["nameSearch"] = filters.query
+        if filters.edition_code:
+            params["edition"] = filters.edition_code
+        if filters.include_tokens:
+            params["includeTokens"] = ""
+        if filters.include_digital:
+            params["includeDigital"] = ""
+        if not filters.all_editions:
+            params["unique"] = ""
+
+        response = await self.http_client.get(
+            f"{self.settings.normalized_archidekt_base_url}/api/cards/v2/",
+            params=params,
+            headers={"Accept": "application/json"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("Archidekt card search returned an invalid payload.")
+
+        results = payload.get("results") or []
+        mapped = [
+            self._map_archidekt_card_reference(item)
+            for item in results
+            if isinstance(item, dict)
+        ]
+        total_matches = _safe_int(payload.get("count"))
+        has_more = bool(payload.get("next")) if payload.get("next") is not None else None
+        return mapped, total_matches, has_more
+
+    async def fetch_deck_cards(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        deck_id: int,
+        include_deleted: bool = False,
+    ) -> dict[str, Any]:
+        resolved = await self._coerce_account(account)
+        include_deleted_flag = "1" if include_deleted else "0"
+        response = await self.http_client.get(
+            f"{self.settings.normalized_archidekt_base_url}/api/decks/{deck_id}/v2/cards/",
+            params={"includeDeleted": include_deleted_flag},
+            headers=_auth_headers(resolved.token),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("Archidekt deck cards endpoint returned an invalid payload.")
+        return payload
+
+    async def create_deck(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        deck: PersonalDeckCreateInput,
+    ) -> tuple[dict[str, Any], PersonalDeckSummary | None]:
+        resolved = await self._coerce_account(account)
+        response = await self.http_client.post(
+            f"{self.settings.normalized_archidekt_base_url}/api/decks/v2/",
+            json=self._deck_create_payload(deck),
+            headers=_json_headers(resolved.token),
+        )
+        response.raise_for_status()
+        payload = _ensure_mapping(response.json(), "Archidekt deck create")
+        return payload, self._coerce_personal_deck_summary(payload)
+
+    async def update_deck(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        deck_id: int,
+        deck: PersonalDeckUpdateInput,
+    ) -> tuple[dict[str, Any], PersonalDeckSummary | None]:
+        resolved = await self._coerce_account(account)
+        response = await self.http_client.patch(
+            f"{self.settings.normalized_archidekt_base_url}/api/decks/{deck_id}/update/",
+            json=self._deck_update_payload(deck),
+            headers=_json_headers(resolved.token),
+        )
+        response.raise_for_status()
+        payload = _ensure_mapping(response.json(), "Archidekt deck update")
+        return payload, self._coerce_personal_deck_summary(payload)
+
+    async def delete_deck(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        deck_id: int,
+    ) -> None:
+        resolved = await self._coerce_account(account)
+        response = await self.http_client.delete(
+            f"{self.settings.normalized_archidekt_base_url}/api/decks/{deck_id}/",
+            headers=_auth_headers(resolved.token),
+        )
+        response.raise_for_status()
+
+    async def modify_deck_cards(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        deck_id: int,
+        cards: list[PersonalDeckCardMutation],
+    ) -> dict[str, Any]:
+        resolved = await self._coerce_account(account)
+        payload_cards = [
+            self._deck_card_mutation_payload(card, index)
+            for index, card in enumerate(cards, start=1)
+        ]
+        response = await self.http_client.patch(
+            f"{self.settings.normalized_archidekt_base_url}/api/decks/{deck_id}/modifyCards/v2/",
+            json={"cards": payload_cards},
+            headers=_json_headers(resolved.token),
+        )
+        response.raise_for_status()
+        return _ensure_mapping(response.json(), "Archidekt deck card modification")
+
+    async def upsert_collection_entry(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        entry: CollectionCardUpsert,
+    ) -> dict[str, Any]:
+        resolved = await self._coerce_account(account)
+        if entry.record_id is None:
+            method = self.http_client.post
+            endpoint = f"{self.settings.normalized_archidekt_base_url}/api/collection/v2/"
+        else:
+            method = self.http_client.patch
+            endpoint = (
+                f"{self.settings.normalized_archidekt_base_url}/api/collection/v2/{entry.record_id}/"
+            )
+
+        response = await method(
+            endpoint,
+            json=self._collection_upsert_payload(entry),
+            headers=_json_headers(resolved.token),
+        )
+        response.raise_for_status()
+        return _ensure_mapping(response.json(), "Archidekt collection upsert")
+
+    async def _fetch_curated_self(self, token: str) -> list[PersonalDeckSummary]:
+        response = await self.http_client.get(
+            f"{self.settings.normalized_archidekt_base_url}/api/decks/curated/self/",
+            headers=_auth_headers(token),
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+        if isinstance(payload, dict):
+            raw_results = payload.get("results") or payload.get("decks") or []
+        elif isinstance(payload, list):
+            raw_results = payload
+        else:
+            raw_results = []
+
+        return [self._map_personal_deck_summary(item) for item in raw_results]
+
+    async def _coerce_account(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+    ) -> AuthenticatedAccount:
+        if isinstance(account, AuthenticatedAccount):
+            return account
+        return await self.resolve_account(account)
+
+    def _map_personal_deck_summary(self, payload: dict[str, Any]) -> PersonalDeckSummary:
+        owner = payload.get("owner") or {}
+        colors = payload.get("colors") or {}
+        return PersonalDeckSummary(
+            id=int(payload["id"]),
+            name=str(payload.get("name") or ""),
+            size=_safe_int(payload.get("size")),
+            deck_format=_safe_int(payload.get("deckFormat")),
+            edh_bracket=_safe_int(payload.get("edhBracket")),
+            private=bool(payload.get("private")),
+            unlisted=bool(payload.get("unlisted")),
+            theorycrafted=bool(payload.get("theorycrafted")),
+            game=_safe_int(payload.get("game")),
+            tags=[str(tag) for tag in (payload.get("tags") or []) if tag],
+            parent_folder_id=_safe_int(payload.get("parentFolderId")),
+            has_primer=bool(payload.get("hasPrimer")),
+            created_at=_parse_datetime(payload.get("createdAt")),
+            updated_at=_parse_datetime(payload.get("updatedAt")),
+            featured=payload.get("featured") or None,
+            custom_featured=payload.get("customFeatured") or None,
+            owner_id=_safe_int(owner.get("id")),
+            owner_username=_compact_text(owner.get("username")),
+            colors={
+                str(key): int(value)
+                for key, value in colors.items()
+                if value not in {None, ""} and _safe_int(value) is not None
+            },
+        )
+
+    def _map_archidekt_card_reference(self, payload: dict[str, Any]) -> ArchidektCardReference:
+        oracle_card = payload.get("oracleCard") or {}
+        edition = payload.get("edition") or {}
+        prices = payload.get("prices") or {}
+        return ArchidektCardReference(
+            card_id=int(payload["id"]),
+            uid=_compact_text(payload.get("uid")),
+            oracle_card_id=_safe_int(oracle_card.get("id")),
+            oracle_id=_compact_text(oracle_card.get("uid")),
+            name=str(oracle_card.get("name") or payload.get("name") or ""),
+            display_name=_compact_text(payload.get("displayName")),
+            mana_cost=_compact_text(oracle_card.get("manaCost")),
+            cmc=_safe_float(oracle_card.get("cmc")),
+            oracle_text=_compact_text(oracle_card.get("text")),
+            colors=[str(item) for item in (oracle_card.get("colors") or []) if item],
+            color_identity=[str(item) for item in (oracle_card.get("colorIdentity") or []) if item],
+            supertypes=[str(item) for item in (oracle_card.get("superTypes") or []) if item],
+            types=[str(item) for item in (oracle_card.get("types") or []) if item],
+            subtypes=[str(item) for item in (oracle_card.get("subTypes") or []) if item],
+            set_code=_compact_text(edition.get("editioncode")),
+            set_name=_compact_text(edition.get("editionname")),
+            rarity=_compact_text(payload.get("rarity")),
+            released_at=_parse_datetime(payload.get("releasedAt")),
+            prices={str(key): _safe_float(value) for key, value in prices.items()},
+            owned=_safe_int(payload.get("owned")),
+            default_category=_compact_text(oracle_card.get("defaultCategory")),
+        )
+
+    def _coerce_personal_deck_summary(self, payload: dict[str, Any]) -> PersonalDeckSummary | None:
+        candidate = payload
+        if isinstance(payload.get("deck"), dict):
+            candidate = payload["deck"]
+        elif isinstance(payload.get("result"), dict):
+            candidate = payload["result"]
+
+        if not isinstance(candidate, dict) or candidate.get("id") in {None, ""}:
+            return None
+
+        try:
+            return self._map_personal_deck_summary(candidate)
+        except Exception:
+            return None
+
+    def _deck_create_payload(self, deck: PersonalDeckCreateInput) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": deck.name,
+            "deckFormat": deck.deck_format,
+            "edhBracket": deck.edh_bracket,
+            "description": deck.description or "",
+            "featured": deck.featured,
+            "playmat": deck.playmat,
+            "copyId": deck.copy_id,
+            "private": deck.private,
+            "unlisted": deck.unlisted,
+            "theorycrafted": deck.theorycrafted,
+            "game": deck.game,
+            "parent_folder": deck.parent_folder_id,
+            "cardPackage": deck.card_package,
+            "extras": deck.extras,
+        }
+        return {key: value for key, value in payload.items() if value is not None}
+
+    def _deck_update_payload(self, deck: PersonalDeckUpdateInput) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": deck.name,
+            "deckFormat": deck.deck_format,
+            "edhBracket": deck.edh_bracket,
+            "description": deck.description,
+            "featured": deck.featured,
+            "playmat": deck.playmat,
+            "copyId": deck.copy_id,
+            "private": deck.private,
+            "unlisted": deck.unlisted,
+            "theorycrafted": deck.theorycrafted,
+            "game": deck.game,
+            "parent_folder": deck.parent_folder_id,
+            "cardPackage": deck.card_package,
+            "extras": deck.extras,
+        }
+        return {key: value for key, value in payload.items() if value is not None}
+
+    def _deck_card_mutation_payload(
+        self,
+        card: PersonalDeckCardMutation,
+        index: int,
+    ) -> dict[str, Any]:
+        patch_id = (
+            card.patch_id
+            or f"mcp-{index}-{card.card_id or card.custom_card_id or card.deck_relation_id or 'card'}"
+        )
+        payload: dict[str, Any] = {
+            "action": card.action,
+            "categories": card.categories,
+            "patchId": patch_id,
+            "modifications": {
+                "quantity": card.modifications.quantity,
+                "modifier": card.modifications.modifier,
+                "customCmc": card.modifications.custom_cmc,
+                "companion": card.modifications.companion,
+                "flippedDefault": card.modifications.flipped_default,
+                "label": card.modifications.label,
+            },
+        }
+        if card.card_id is not None:
+            payload["cardid"] = card.card_id
+        if card.custom_card_id is not None:
+            payload["customCardId"] = card.custom_card_id
+        if card.deck_relation_id is not None:
+            payload["deckRelationId"] = card.deck_relation_id
+        return payload
+
+    def _collection_upsert_payload(self, entry: CollectionCardUpsert) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "game": entry.game,
+            "id": entry.record_id,
+            "quantity": entry.quantity,
+            "card": entry.card_id,
+            "modifier": entry.modifier,
+            "language": entry.language,
+            "condition": entry.condition,
+            "tags": entry.tags,
+            "purchasePrice": entry.purchase_price,
+        }
+        return {key: value for key, value in payload.items() if value is not None}
 
 
 class ScryfallClient:
@@ -606,6 +1086,42 @@ def _color_query(prefix: str, colors: list[str], mode: str) -> str:
     return ""
 
 
+def _compact_text(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+    compact = " ".join(str(raw_value).strip().split())
+    return compact or None
+
+
+def _ensure_mapping(payload: Any, context: str) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        return payload
+    raise RuntimeError(f"{context} endpoint returned an invalid payload.")
+
+
+def _normalize_next_url(raw_url: Any, base_url: str) -> str | None:
+    if not raw_url:
+        return None
+    value = str(raw_url).replace("http://", "https://", 1)
+    if value.startswith("/"):
+        return base_url + value
+    return value
+
+
+def _dedupe_personal_decks(decks: list[PersonalDeckSummary]) -> list[PersonalDeckSummary]:
+    deduped: dict[int, PersonalDeckSummary] = {}
+    default_timestamp = datetime(1970, 1, 1, tzinfo=UTC).timestamp()
+    for deck in decks:
+        deduped[deck.id] = deck
+    return sorted(
+        deduped.values(),
+        key=lambda item: (
+            -(item.updated_at.timestamp() if item.updated_at else default_timestamp),
+            item.name.casefold(),
+        ),
+    )
+
+
 def _parse_datetime(raw_value: Any) -> datetime | None:
     if not raw_value:
         return None
@@ -704,6 +1220,7 @@ def _deserialize_record(payload: dict[str, Any]) -> CollectionCardRecord:
         set_name=payload.get("set_name"),
         commander_legal=payload.get("commander_legal"),
         oracle_id=payload.get("oracle_id"),
+        card_id=_safe_int(payload.get("card_id")),
         printing_id=payload.get("printing_id"),
         edhrec_rank=_safe_int(payload.get("edhrec_rank")),
         image_uri=payload.get("image_uri"),
@@ -716,3 +1233,11 @@ def _require_datetime(raw_value: Any) -> datetime:
     if parsed is None:
         raise ValueError("invalid cached timestamp")
     return parsed
+
+
+def serialize_collection_snapshot(snapshot: CollectionSnapshot) -> dict[str, Any]:
+    return _serialize_snapshot(snapshot)
+
+
+def deserialize_collection_snapshot(payload: dict[str, Any]) -> CollectionSnapshot:
+    return _deserialize_snapshot(payload)

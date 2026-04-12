@@ -18,6 +18,7 @@ class RuntimeSettings(BaseSettings):
     archidekt_base_url: str = "https://archidekt.com"
     scryfall_base_url: str = "https://api.scryfall.com"
     cache_ttl_seconds: int = Field(default=86400, ge=30, le=86400)
+    personal_deck_cache_ttl_seconds: int = Field(default=300, ge=0, le=3600)
     redis_url: str = "redis://127.0.0.1:6379/0"
     redis_key_prefix: str = "archidekt-commander"
     http_timeout_seconds: float = Field(default=30.0, ge=5.0, le=120.0)

@@ -53,6 +53,7 @@ class FilterTests(unittest.TestCase):
             set_name="Ice Age",
             commander_legal=True,
             oracle_id="brainstorm-oracle",
+            card_id=12345,
             printing_id="brainstorm-printing",
             edhrec_rank=123,
             image_uri=None,

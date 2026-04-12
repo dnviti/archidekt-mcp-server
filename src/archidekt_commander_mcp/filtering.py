@@ -262,6 +262,9 @@ def aggregate_owned_results(
                 oracle_id=representative.oracle_id,
                 source_uri=f"{base_url}/collection/v2/{collection_id}",
                 image_uri=representative.image_uri,
+                archidekt_card_ids=sorted(
+                    {item.card_id for item in ordered if item.card_id is not None}
+                ),
                 archidekt_record_ids=sorted(item.record_id for item in ordered),
             )
         )

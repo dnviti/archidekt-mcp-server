@@ -3,9 +3,17 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime
 
-from archidekt_commander_mcp.clients import build_scryfall_query, card_matches_scryfall_filters
-from archidekt_commander_mcp.filtering import normalize_color_symbols, record_matches_filters
-from archidekt_commander_mcp.models import CardSearchFilters, CollectionCardRecord
+from archidekt_commander_mcp.clients import (
+    build_scryfall_query,
+    card_matches_scryfall_filters,
+    map_scryfall_order,
+)
+from archidekt_commander_mcp.filtering import (
+    normalize_color_symbols,
+    record_matches_filters,
+    sort_card_results,
+)
+from archidekt_commander_mcp.models import CardResult, CardSearchFilters, CollectionCardRecord
 
 
 class FilterTests(unittest.TestCase):
@@ -90,6 +98,60 @@ class FilterTests(unittest.TestCase):
             price_source="usd",
         )
         self.assertTrue(card_matches_scryfall_filters(card, filters))
+
+    def test_normalizes_sort_aliases(self) -> None:
+        price_filters = CardSearchFilters(sort_by="price_desc")
+        self.assertEqual(price_filters.sort_by, "unit_price")
+        self.assertEqual(price_filters.sort_direction, "desc")
+
+        rarity_filters = CardSearchFilters(sort_by="rarity_asc")
+        self.assertEqual(rarity_filters.sort_by, "rarity")
+        self.assertEqual(rarity_filters.sort_direction, "asc")
+
+        cmc_filters = CardSearchFilters(sort_by="mana_value_desc")
+        self.assertEqual(cmc_filters.sort_by, "cmc")
+        self.assertEqual(cmc_filters.sort_direction, "desc")
+
+    def test_sort_card_results_keeps_missing_values_last_for_descending_price(self) -> None:
+        filters = CardSearchFilters(sort_by="price_desc")
+        results = [
+            CardResult(
+                source="collection",
+                ownership_scope="owned",
+                name="Cheap Card",
+                unit_price=0.25,
+            ),
+            CardResult(
+                source="collection",
+                ownership_scope="owned",
+                name="Expensive Card",
+                unit_price=14.50,
+            ),
+            CardResult(
+                source="collection",
+                ownership_scope="owned",
+                name="Unknown Price Card",
+                unit_price=None,
+            ),
+        ]
+
+        ordered = sort_card_results(results, filters)
+        self.assertEqual([card.name for card in ordered], ["Expensive Card", "Cheap Card", "Unknown Price Card"])
+
+    def test_sort_card_results_supports_rarity(self) -> None:
+        filters = CardSearchFilters(sort_by="rarity_desc")
+        results = [
+            CardResult(source="collection", ownership_scope="owned", name="Common Spell", rarity="common"),
+            CardResult(source="collection", ownership_scope="owned", name="Rare Spell", rarity="rare"),
+            CardResult(source="collection", ownership_scope="owned", name="Mythic Spell", rarity="mythic"),
+        ]
+
+        ordered = sort_card_results(results, filters)
+        self.assertEqual([card.name for card in ordered], ["Mythic Spell", "Rare Spell", "Common Spell"])
+
+    def test_map_scryfall_order_supports_rarity(self) -> None:
+        filters = CardSearchFilters(sort_by="rarity_desc")
+        self.assertEqual(map_scryfall_order(filters.sort_by, filters.price_source), "rarity")
 
 
 if __name__ == "__main__":

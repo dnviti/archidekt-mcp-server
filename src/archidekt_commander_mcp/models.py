@@ -23,8 +23,44 @@ SortField = Literal[
     "updated_at",
     "added_at",
     "edhrec_rank",
+    "rarity",
 ]
 Rarity = Literal["common", "uncommon", "rare", "mythic", "special", "bonus"]
+
+_SORT_FIELD_ALIASES: dict[str, tuple[str, str | None]] = {
+    "name": ("name", None),
+    "alphabetical": ("name", None),
+    "cmc": ("cmc", None),
+    "mana_value": ("cmc", None),
+    "mv": ("cmc", None),
+    "quantity": ("quantity", None),
+    "qty": ("quantity", None),
+    "price": ("unit_price", None),
+    "unit_price": ("unit_price", None),
+    "card_price": ("unit_price", None),
+    "value": ("total_value", None),
+    "total_value": ("total_value", None),
+    "updated": ("updated_at", None),
+    "updated_at": ("updated_at", None),
+    "modified": ("updated_at", None),
+    "modified_at": ("updated_at", None),
+    "added": ("added_at", None),
+    "added_at": ("added_at", None),
+    "latest": ("added_at", "desc"),
+    "newest": ("added_at", "desc"),
+    "recent": ("added_at", "desc"),
+    "oldest": ("added_at", "asc"),
+    "edhrec": ("edhrec_rank", None),
+    "edhrec_rank": ("edhrec_rank", None),
+    "rarity": ("rarity", None),
+}
+
+_SORT_DIRECTION_ALIASES = {
+    "asc": "asc",
+    "ascending": "asc",
+    "desc": "desc",
+    "descending": "desc",
+}
 
 
 def _normalize_optional_text(value: object) -> str | None:
@@ -41,6 +77,47 @@ def _normalize_string_list(values: list[str]) -> list[str]:
         if compact:
             normalized.append(compact)
     return normalized
+
+
+def _normalize_sort_token(value: object) -> str | None:
+    compact = _normalize_optional_text(value)
+    if compact is None:
+        return None
+    return compact.casefold().replace("-", "_").replace(" ", "_")
+
+
+def _normalize_sort_field_and_direction(
+    sort_by: object,
+    sort_direction: object,
+) -> tuple[str | object, str | object]:
+    normalized_direction = _SORT_DIRECTION_ALIASES.get(
+        _normalize_sort_token(sort_direction) or "",
+        sort_direction,
+    )
+    normalized_sort_by = _normalize_sort_token(sort_by)
+    if normalized_sort_by is None:
+        return sort_by, normalized_direction
+
+    implied_direction: str | None = None
+    for suffix, direction in (
+        ("_descending", "desc"),
+        ("_ascending", "asc"),
+        ("_desc", "desc"),
+        ("_asc", "asc"),
+    ):
+        if normalized_sort_by.endswith(suffix):
+            normalized_sort_by = normalized_sort_by[: -len(suffix)]
+            implied_direction = direction
+            break
+
+    alias = _SORT_FIELD_ALIASES.get(normalized_sort_by)
+    if alias is None:
+        return normalized_sort_by, normalized_direction
+
+    canonical_field, alias_direction = alias
+    if normalized_direction in {"asc", "desc"}:
+        return canonical_field, normalized_direction
+    return canonical_field, implied_direction or alias_direction or normalized_direction
 
 
 class CollectionLocator(BaseModel):
@@ -174,6 +251,30 @@ class CardSearchFilters(BaseModel):
     sort_direction: SortDirection = Field(default="asc")
     limit: int = Field(default=25, ge=1, le=100)
     page: int = Field(default=1, ge=1, le=1000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_sorting(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+
+        normalized = dict(value)
+        had_sort_by = "sort_by" in normalized
+        had_sort_direction = "sort_direction" in normalized
+        sort_by, sort_direction = _normalize_sort_field_and_direction(
+            normalized.get("sort_by"),
+            normalized.get("sort_direction"),
+        )
+        if sort_by is None and had_sort_by:
+            normalized.pop("sort_by", None)
+        elif sort_by is not None:
+            normalized["sort_by"] = sort_by
+
+        if sort_direction is None and had_sort_direction:
+            normalized.pop("sort_direction", None)
+        elif sort_direction is not None:
+            normalized["sort_direction"] = sort_direction
+        return normalized
 
     @field_validator(
         "exact_name",

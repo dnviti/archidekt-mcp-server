@@ -156,6 +156,10 @@ collection v2 upserts.
 The current authenticated write surface is focused on the account's personal decks and collection v2
 entries. It does not yet expose every Archidekt endpoint such as folders, tags, or text-import flows.
 
+For sorting, prefer canonical `sort_by` values such as `unit_price`, `total_value`, `cmc`, `edhrec_rank`,
+`rarity`, `added_at`, and `updated_at`, but the server also normalizes common aliases such as `price`,
+`price_desc`, `mana_value_desc`, and `rarity_desc`.
+
 ## Default Model Response Format
 
 Unless the user explicitly asks for another format, the model should respond with:

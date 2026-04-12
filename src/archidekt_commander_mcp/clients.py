@@ -971,6 +971,8 @@ def map_scryfall_order(sort_by: str, price_source: str) -> str:
         return "name"
     if sort_by == "cmc":
         return "cmc"
+    if sort_by == "rarity":
+        return "rarity"
     if sort_by == "edhrec_rank":
         return "edhrec"
     if sort_by in {"unit_price", "total_value"}:

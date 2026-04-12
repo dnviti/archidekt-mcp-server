@@ -26,6 +26,15 @@ _SCRYFALL_PRICE_MAP = {
     "tix": "tix",
 }
 
+_RARITY_SORT_ORDER = {
+    "common": 0,
+    "uncommon": 1,
+    "rare": 2,
+    "mythic": 3,
+    "special": 4,
+    "bonus": 5,
+}
+
 
 def normalize_color_symbols(raw_values: Iterable[str] | None) -> tuple[str, ...]:
     if not raw_values:
@@ -275,24 +284,36 @@ def aggregate_owned_results(
 def sort_card_results(results: list[CardResult], filters: CardSearchFilters) -> list[CardResult]:
     reverse = filters.sort_direction == "desc"
 
-    def sort_key(result: CardResult) -> tuple:
-        if filters.sort_by == "cmc":
-            return (result.cmc is None, result.cmc or 0, result.name.casefold())
-        if filters.sort_by == "quantity":
-            return (result.quantity is None, result.quantity or 0, result.name.casefold())
-        if filters.sort_by == "unit_price":
-            return (result.unit_price is None, result.unit_price or 0, result.name.casefold())
-        if filters.sort_by == "total_value":
-            return (result.total_value is None, result.total_value or 0, result.name.casefold())
-        if filters.sort_by == "updated_at":
-            return (result.updated_at is None, result.updated_at or 0, result.name.casefold())
-        if filters.sort_by == "added_at":
-            return (result.added_at is None, result.added_at or 0, result.name.casefold())
-        if filters.sort_by == "edhrec_rank":
-            return (result.edhrec_rank is None, result.edhrec_rank or 10**12, result.name.casefold())
-        return (result.name.casefold(),)
+    if filters.sort_by == "name":
+        return sorted(results, key=lambda result: result.name.casefold(), reverse=reverse)
 
-    return sorted(results, key=sort_key, reverse=reverse)
+    def sortable_value(result: CardResult) -> float | int | None:
+        if filters.sort_by == "cmc":
+            return result.cmc
+        if filters.sort_by == "quantity":
+            return result.quantity
+        if filters.sort_by == "unit_price":
+            return result.unit_price
+        if filters.sort_by == "total_value":
+            return result.total_value
+        if filters.sort_by == "updated_at":
+            return result.updated_at.timestamp() if result.updated_at else None
+        if filters.sort_by == "added_at":
+            return result.added_at.timestamp() if result.added_at else None
+        if filters.sort_by == "edhrec_rank":
+            return result.edhrec_rank
+        if filters.sort_by == "rarity":
+            return _RARITY_SORT_ORDER.get((result.rarity or "").casefold())
+        return None
+
+    present_results = [result for result in results if sortable_value(result) is not None]
+    missing_results = [result for result in results if sortable_value(result) is None]
+
+    # Keep alphabetical ordering stable inside equal-value groups while still honoring desc/asc.
+    present_results = sorted(present_results, key=lambda result: result.name.casefold())
+    present_results = sorted(present_results, key=lambda result: sortable_value(result), reverse=reverse)
+    missing_results = sorted(missing_results, key=lambda result: result.name.casefold())
+    return present_results + missing_results
 
 
 def paginate_results(results: list[CardResult], page: int, limit: int) -> list[CardResult]:

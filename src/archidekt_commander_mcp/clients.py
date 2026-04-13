@@ -636,13 +636,67 @@ class ArchidektAuthenticatedClient:
             self._deck_card_mutation_payload(card, index)
             for index, card in enumerate(cards, start=1)
         ]
+        endpoint = f"{self.settings.normalized_archidekt_base_url}/api/decks/{deck_id}/modifyCards/v2/"
+        headers = _json_headers(resolved.token)
         response = await self.http_client.patch(
-            f"{self.settings.normalized_archidekt_base_url}/api/decks/{deck_id}/modifyCards/v2/",
+            endpoint,
             json={"cards": payload_cards},
-            headers=_json_headers(resolved.token),
+            headers=headers,
         )
-        response.raise_for_status()
-        return _ensure_mapping(response.json(), "Archidekt deck card modification")
+        if response.status_code < 400:
+            return _ensure_mapping(response.json(), "Archidekt deck card modification")
+
+        batch_error = self._remote_error_payload(response)
+        if response.status_code != 400 or len(payload_cards) <= 1:
+            raise RuntimeError(
+                self._format_remote_error(
+                    "Archidekt deck card modification",
+                    response,
+                )
+            )
+
+        successful_mutations: list[dict[str, Any]] = []
+        failed_mutations: list[dict[str, Any]] = []
+        for payload_card in payload_cards:
+            single_response = await self.http_client.patch(
+                endpoint,
+                json={"cards": [payload_card]},
+                headers=headers,
+            )
+            if single_response.status_code < 400:
+                successful_mutations.append(
+                    {
+                        "request": payload_card,
+                        "response": _ensure_mapping(
+                            single_response.json(),
+                            "Archidekt deck card modification",
+                        ),
+                    }
+                )
+                continue
+
+            failed_mutations.append(
+                {
+                    "request": payload_card,
+                    "status_code": single_response.status_code,
+                    "error": self._remote_error_payload(single_response),
+                }
+            )
+
+        if not successful_mutations:
+            raise RuntimeError(
+                "Archidekt rejected the deck card mutation batch and every per-card retry failed. "
+                f"Batch error: {batch_error}. "
+                f"Per-card errors: {json.dumps(failed_mutations, ensure_ascii=True, separators=(',', ':'))}"
+            )
+
+        return {
+            "batch_error": batch_error,
+            "successful_mutations": successful_mutations,
+            "failed_mutations": failed_mutations,
+            "successful_count": len(successful_mutations),
+            "failed_count": len(failed_mutations),
+        }
 
     async def upsert_collection_entry(
         self,
@@ -837,18 +891,23 @@ class ArchidektAuthenticatedClient:
             card.patch_id
             or f"mcp-{index}-{card.card_id or card.custom_card_id or card.deck_relation_id or 'card'}"
         )
-        payload: dict[str, Any] = {
-            "action": card.action,
-            "categories": card.categories,
-            "patchId": patch_id,
-            "modifications": {
+        modifications = {
+            key: value
+            for key, value in {
                 "quantity": card.modifications.quantity,
                 "modifier": card.modifications.modifier,
                 "customCmc": card.modifications.custom_cmc,
                 "companion": card.modifications.companion,
                 "flippedDefault": card.modifications.flipped_default,
                 "label": card.modifications.label,
-            },
+            }.items()
+            if value is not None
+        }
+        payload: dict[str, Any] = {
+            "action": card.action,
+            "categories": card.categories,
+            "patchId": patch_id,
+            "modifications": modifications,
         }
         if card.card_id is not None:
             payload["cardid"] = card.card_id
@@ -857,6 +916,19 @@ class ArchidektAuthenticatedClient:
         if card.deck_relation_id is not None:
             payload["deckRelationId"] = card.deck_relation_id
         return payload
+
+    def _remote_error_payload(self, response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+            return json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+        except Exception:
+            return (response.text or "").strip() or f"HTTP {response.status_code}"
+
+    def _format_remote_error(self, context: str, response: httpx.Response) -> str:
+        return (
+            f"{context} failed with HTTP {response.status_code}: "
+            f"{self._remote_error_payload(response)}"
+        )
 
     def _collection_upsert_payload(self, entry: CollectionCardUpsert) -> dict[str, Any]:
         payload: dict[str, Any] = {

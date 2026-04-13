@@ -737,19 +737,82 @@ class DeckbuildingService:
         account: ArchidektAccount | None = None,
     ) -> PersonalDeckMutationResponse:
         resolved_account = await self._coerce_account(account)
+        cards, backfill_notes = await self._backfill_mutation_card_ids(
+            deck_id=deck_id,
+            cards=cards,
+            account=resolved_account,
+        )
         payload = await self.auth_client.modify_deck_cards(resolved_account, deck_id, cards)
         await self._invalidate_personal_deck_usage_cache(resolved_account)
+        successful_count = _safe_int(payload.get("successful_count")) if isinstance(payload, dict) else None
+        failed_count = _safe_int(payload.get("failed_count")) if isinstance(payload, dict) else None
+        affected_count = successful_count if successful_count is not None else len(cards)
+        notes = [
+            "Personal deck usage cache invalidated for this account.",
+            "Re-run `get_personal_deck_cards` if you need fresh `deck_relation_id` values after this patch.",
+            *backfill_notes,
+        ]
+        if failed_count:
+            notes.append(
+                f"Applied {affected_count} deck card mutation(s); {failed_count} mutation(s) were rejected by Archidekt. Inspect `result.failed_mutations` for the exact payloads and errors."
+            )
         return PersonalDeckMutationResponse(
             action="modified-cards",
             deck_id=deck_id,
             account_username=resolved_account.username,
-            affected_count=len(cards),
+            affected_count=affected_count,
             processed_at=datetime.now(UTC),
-            notes=[
-                "Personal deck usage cache invalidated for this account.",
-                "Re-run `get_personal_deck_cards` if you need fresh `deck_relation_id` values after this patch.",
-            ],
+            notes=notes,
             result=payload,
+        )
+
+    async def _backfill_mutation_card_ids(
+        self,
+        deck_id: int,
+        cards: list[PersonalDeckCardMutation],
+        account: AuthenticatedAccount,
+    ) -> tuple[list[PersonalDeckCardMutation], list[str]]:
+        cards_needing_backfill = [
+            card
+            for card in cards
+            if card.deck_relation_id is not None
+            and card.card_id is None
+            and card.custom_card_id is None
+        ]
+        if not cards_needing_backfill:
+            return cards, []
+
+        deck_state = await self.get_personal_deck_cards(
+            deck_id=deck_id,
+            include_deleted=True,
+            account=account,
+        )
+        card_ids_by_relation = {
+            deck_card.deck_relation_id: deck_card.archidekt_card_id
+            for deck_card in deck_state.cards
+            if deck_card.deck_relation_id is not None and deck_card.archidekt_card_id is not None
+        }
+        backfilled_count = 0
+        updated_cards: list[PersonalDeckCardMutation] = []
+        for card in cards:
+            if (
+                card.deck_relation_id is not None
+                and card.card_id is None
+                and card.custom_card_id is None
+            ):
+                backfilled_card_id = card_ids_by_relation.get(card.deck_relation_id)
+                if backfilled_card_id is not None:
+                    card = card.model_copy(update={"card_id": backfilled_card_id})
+                    backfilled_count += 1
+            updated_cards.append(card)
+
+        if not backfilled_count:
+            return updated_cards, []
+        return (
+            updated_cards,
+            [
+                f"Backfilled Archidekt `card_id` values for {backfilled_count} deck mutation(s) using the current deck state."
+            ],
         )
 
     async def upsert_collection_entries(

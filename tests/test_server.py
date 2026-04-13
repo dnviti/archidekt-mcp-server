@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 from datetime import UTC, datetime, timedelta
 import hashlib
 import os
@@ -35,6 +36,8 @@ from archidekt_commander_mcp.models import (
     CollectionCardRecord,
     CollectionLocator,
     CollectionSnapshot,
+    PersonalDeckCardModifications,
+    PersonalDeckCardMutation,
     PersonalDeckCardUsage,
     PersonalDeckSummary,
 )
@@ -158,6 +161,7 @@ class FakeCollectionClient:
 class FakeAuthMutationClient:
     def __init__(self) -> None:
         self.upsert_calls: list[CollectionCardUpsert] = []
+        self.modify_calls: list[list[object]] = []
 
     async def upsert_collection_entry(
         self,
@@ -202,6 +206,17 @@ class FakeAuthMutationClient:
                 }
             ],
         }
+
+    async def modify_deck_cards(
+        self,
+        account: AuthenticatedAccount,
+        deck_id: int,
+        cards: list[object],
+    ) -> dict[str, object]:
+        del account
+        del deck_id
+        self.modify_calls.append(cards)
+        return {"successful_count": len(cards), "failed_count": 0}
 
 
 class FakeAuthLoginClient:
@@ -270,12 +285,48 @@ class FakeScryfallClient:
 class FakeHttpResponse:
     def __init__(self, payload: dict[str, object]) -> None:
         self._payload = payload
+        self.status_code = 200
+        self.text = json.dumps(payload)
 
     def raise_for_status(self) -> None:
         return None
 
     def json(self) -> dict[str, object]:
         return self._payload
+
+
+class FakeStatusHttpResponse(FakeHttpResponse):
+    def __init__(self, status_code: int, payload: dict[str, object]) -> None:
+        super().__init__(payload)
+        self.status_code = status_code
+
+
+class FakeDeckMutationHttpClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def patch(
+        self,
+        url: str,
+        json: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> FakeStatusHttpResponse:
+        payload = dict(json or {})
+        self.calls.append(
+            {
+                "url": url,
+                "json": payload,
+                "headers": dict(headers or {}),
+            }
+        )
+        cards = payload.get("cards") or []
+        if len(cards) > 1:
+            return FakeStatusHttpResponse(400, {"error": "batch failed"})
+
+        card = cards[0]
+        if card.get("patchId") == "ok-card":
+            return FakeStatusHttpResponse(201, {"add": [{"deckRelationId": 99, "cardId": card.get("cardid")}]})
+        return FakeStatusHttpResponse(400, {"error": "bad card"})
 
 
 class FakeCardCatalogHttpClient:
@@ -637,6 +688,38 @@ class ArchidektCatalogSearchTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual([result.card_id for result in results], [150824, 150825])
 
+    async def test_modify_deck_cards_retries_individual_cards_after_batch_400(self) -> None:
+        http_client = FakeDeckMutationHttpClient()
+        client = ArchidektAuthenticatedClient(http_client, RuntimeSettings())
+        result = await client.modify_deck_cards(
+            AuthenticatedAccount(token="secret", username="tester", user_id=1),
+            deck_id=123,
+            cards=[
+                PersonalDeckCardMutation(action="add", card_id=150824, patch_id="ok-card"),
+                PersonalDeckCardMutation(action="add", card_id=150825, patch_id="bad-card"),
+            ],
+        )
+
+        self.assertEqual(len(http_client.calls), 3)
+        self.assertEqual(result["successful_count"], 1)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertEqual(result["successful_mutations"][0]["request"]["patchId"], "ok-card")
+        self.assertEqual(result["failed_mutations"][0]["request"]["patchId"], "bad-card")
+
+    async def test_deck_card_mutation_payload_omits_null_modification_fields(self) -> None:
+        client = ArchidektAuthenticatedClient(FakeDeckMutationHttpClient(), RuntimeSettings())
+        payload = client._deck_card_mutation_payload(
+            PersonalDeckCardMutation(
+                action="add",
+                card_id=150824,
+                patch_id="null-filter-test",
+                modifications=PersonalDeckCardModifications(quantity=1),
+            ),
+            1,
+        )
+
+        self.assertEqual(payload["modifications"], {"quantity": 1})
+
     async def test_private_snapshot_reuses_redis_cache_across_services(self) -> None:
         snapshot = CollectionSnapshot(
             collection_id=321,
@@ -889,6 +972,27 @@ class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.cards[0].archidekt_card_id, 150824)
             self.assertEqual(response.cards[0].name, "Sol Ring")
             self.assertEqual(response.cards[0].type_line, "Artifact")
+        finally:
+            await service.http_client.aclose()
+
+    async def test_modify_personal_deck_cards_backfills_card_id_from_deck_relation_id(self) -> None:
+        service = DeckbuildingService(RuntimeSettings())
+        original_redis = service.redis_client
+        fake_auth_client = FakeAuthMutationClient()
+        service.auth_client = fake_auth_client
+        await original_redis.aclose()
+        account = AuthenticatedAccount(token="secret", username="tester", user_id=1)
+        try:
+            response = await service.modify_personal_deck_cards(
+                deck_id=55,
+                cards=[PersonalDeckCardMutation(action="remove", deck_relation_id=77)],
+                account=account,
+            )
+            self.assertEqual(response.affected_count, 1)
+            self.assertTrue(
+                any("Backfilled Archidekt `card_id` values" in note for note in response.notes)
+            )
+            self.assertEqual(fake_auth_client.modify_calls[0][0].card_id, 150824)
         finally:
             await service.http_client.aclose()
 

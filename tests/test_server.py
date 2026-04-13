@@ -107,6 +107,21 @@ class HttpRouteTests(unittest.TestCase):
         self.assertEqual(request.filters.sort_by, "unit_price")
         self.assertEqual(request.filters.sort_direction, "desc")
 
+    def test_tool_annotations_distinguish_read_only_and_mutating_tools(self) -> None:
+        server = create_server(RuntimeSettings())
+        tools = asyncio.run(server.list_tools())
+        tools_by_name = {tool.name: tool for tool in tools}
+
+        self.assertTrue(tools_by_name["search_owned_cards"].annotations.readOnlyHint)
+        self.assertTrue(tools_by_name["search_unowned_cards"].annotations.readOnlyHint)
+        self.assertTrue(tools_by_name["get_personal_deck_cards"].annotations.readOnlyHint)
+        self.assertTrue(tools_by_name["list_personal_decks"].annotations.readOnlyHint)
+        self.assertFalse(tools_by_name["login_archidekt"].annotations.readOnlyHint)
+        self.assertFalse(tools_by_name["create_personal_deck"].annotations.destructiveHint)
+        self.assertTrue(tools_by_name["modify_personal_deck_cards"].annotations.destructiveHint)
+        self.assertTrue(tools_by_name["delete_personal_deck"].annotations.destructiveHint)
+        self.assertFalse(tools_by_name["refresh_collection_cache"].annotations.readOnlyHint)
+
 
 class RuntimeSettingsEnvTests(unittest.TestCase):
     def test_reads_runtime_settings_from_environment(self) -> None:
@@ -1217,10 +1232,10 @@ class OAuthHttpRouteTests(unittest.TestCase):
             )
 
         with (
-            patch("archidekt_commander_mcp.server.redis_async.from_url", return_value=redis_client),
-            patch("archidekt_commander_mcp.server.ArchidektAuthenticatedClient.login", new=fake_login),
+            patch("archidekt_commander_mcp.app_factory.redis_async.from_url", return_value=redis_client),
+            patch("archidekt_commander_mcp.app_factory.ArchidektAuthenticatedClient.login", new=fake_login),
             patch(
-                "archidekt_commander_mcp.server.ArchidektAuthenticatedClient.list_personal_decks",
+                "archidekt_commander_mcp.app_factory.ArchidektAuthenticatedClient.list_personal_decks",
                 new=fake_list_personal_decks,
             ),
         ):

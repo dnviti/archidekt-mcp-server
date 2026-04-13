@@ -62,6 +62,23 @@ _SORT_DIRECTION_ALIASES = {
     "descending": "desc",
 }
 
+_DECK_FORMAT_DESCRIPTION = (
+    "Archidekt numeric deck format id. Quantity rules depend on this format: "
+    "Commander decks are singleton except for basic lands, while most other formats "
+    "normally allow up to 4 copies of a non-basic card and unlimited basic lands."
+)
+
+_DECK_MUTATION_QUANTITY_DESCRIPTION = (
+    "Exact quantity for this deck card after the mutation. Values greater than 1 are allowed. "
+    "For Commander decks, only basic lands should normally exceed 1 copy. "
+    "For non-Commander formats, non-basic cards should normally stay at 4 copies or fewer, "
+    "while basic lands may be unlimited."
+)
+
+_COLLECTION_QUANTITY_DESCRIPTION = (
+    "Owned copies to store in the collection. Any positive integer is allowed."
+)
+
 
 def _normalize_optional_text(value: object) -> str | None:
     if value is None:
@@ -638,7 +655,7 @@ class PersonalDeckCardsResponse(BaseModel):
 
 class PersonalDeckCreateInput(BaseModel):
     name: str
-    deck_format: int = Field(ge=1)
+    deck_format: int = Field(ge=1, description=_DECK_FORMAT_DESCRIPTION)
     edh_bracket: int | None = Field(default=None, ge=1, le=5)
     description: str | None = None
     featured: str | None = None
@@ -666,7 +683,7 @@ class PersonalDeckCreateInput(BaseModel):
 
 class PersonalDeckUpdateInput(BaseModel):
     name: str | None = None
-    deck_format: int | None = Field(default=None, ge=1)
+    deck_format: int | None = Field(default=None, ge=1, description=_DECK_FORMAT_DESCRIPTION)
     edh_bracket: int | None = Field(default=None, ge=1, le=5)
     description: str | None = None
     featured: str | None = None
@@ -693,7 +710,11 @@ class PersonalDeckUpdateInput(BaseModel):
 
 
 class PersonalDeckCardModifications(BaseModel):
-    quantity: int | None = Field(default=None, ge=0)
+    quantity: int | None = Field(
+        default=None,
+        ge=0,
+        description=_DECK_MUTATION_QUANTITY_DESCRIPTION,
+    )
     modifier: str | None = None
     custom_cmc: float | None = Field(default=None, ge=0)
     companion: bool | None = None
@@ -783,7 +804,7 @@ class PersonalDeckMutationResponse(BaseModel):
 class CollectionCardUpsert(BaseModel):
     record_id: int | None = Field(default=None, ge=1)
     card_id: int = Field(ge=1)
-    quantity: int = Field(ge=1)
+    quantity: int = Field(ge=1, description=_COLLECTION_QUANTITY_DESCRIPTION)
     game: int = Field(default=1, ge=1, le=3)
     modifier: str | None = None
     language: int | None = Field(default=None, ge=1)

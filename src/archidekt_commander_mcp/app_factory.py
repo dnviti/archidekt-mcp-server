@@ -579,7 +579,10 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         annotations=DESTRUCTIVE_WRITE_TOOL_ANNOTATIONS,
         description=(
             "Add, modify, or remove cards in a personal Archidekt deck. Use `search_archidekt_cards`, "
-            "`search_owned_cards`, or `get_personal_deck_cards` first to resolve the needed ids."
+            "`search_owned_cards`, or `get_personal_deck_cards` first to resolve the needed ids. "
+            "Use `modifications.quantity` for the exact copy count when a card should appear more than once. "
+            "Commander decks should normally keep non-basic cards at one copy, while non-Commander decks "
+            "usually cap non-basic cards at four copies and allow unlimited basic lands."
         ),
     )
     async def modify_personal_deck_cards(

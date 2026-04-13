@@ -37,6 +37,11 @@ Stateless rules:
 - Use `get_personal_deck_cards` before editing an existing deck when you need `deck_relation_id` values.
 - If the user explicitly asks to create or update a deck on Archidekt, use the authenticated deck and
   collection mutation tools instead of only describing the changes.
+- Collection quantities may be any positive integer.
+- Deck mutation quantities may be greater than 1 when needed.
+- For Commander decks, only basic lands should normally exceed 1 copy.
+- For non-Commander formats, basic lands may be unlimited and other cards should normally cap at 4 copies.
+- When applying deck writes, prefer one mutation with the exact final `quantity` instead of repeated duplicate adds.
 
 Filter mapping:
 - Prefer `color_identity` for Commander logic.
@@ -64,6 +69,9 @@ Final response format:
 - When you present deck additions or recommendations, group cards by category.
 - Use a plain category heading, then list one card per line as `N Card Name`.
 - `N` must be the exact quantity of that card to add to the deck.
+- Do not default every card to `1`; choose quantities that match the deck format.
+- For Commander, use quantities above `1` only for basic lands.
+- For most non-Commander formats, use at most `4` copies of a non-basic card and allow unlimited basic lands.
 - Do not use bullets or numbering for card lines.
 - Example:
   Strategy Guide

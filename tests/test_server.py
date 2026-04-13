@@ -42,6 +42,7 @@ from archidekt_commander_mcp.models import (
     PersonalDeckSummary,
 )
 from archidekt_commander_mcp.server import DeckbuildingService, PersonalDeckUsageSnapshot, create_server
+from archidekt_commander_mcp.server_contracts import SERVER_INSTRUCTIONS
 from archidekt_commander_mcp.webui import render_home_page
 
 
@@ -154,8 +155,28 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('const authEnabled = true;', html)
         self.assertIn("window.localStorage.getItem(oauthStorageKey)", html)
         self.assertIn("function expiresAtFromSeconds(expiresInSeconds)", html)
+        self.assertIn("Deck writes may use `modifications.quantity` values greater than 1 when needed.", html)
+        self.assertIn("non-basic cards should normally stay at 4 copies or fewer", html)
         self.assertIn("sort_by: unit_price", html)
         self.assertIn("sort_direction: desc", html)
+
+    def test_server_instructions_explain_quantity_rules(self) -> None:
+        self.assertIn("Collection quantities may be any positive integer.", SERVER_INSTRUCTIONS)
+        self.assertIn("For Commander decks, only basic lands should normally exceed 1 copy.", SERVER_INSTRUCTIONS)
+        self.assertIn("use at most `4` copies of a non-basic card", SERVER_INSTRUCTIONS)
+
+    def test_quantity_fields_expose_copy_rule_descriptions(self) -> None:
+        deck_quantity_description = (
+            PersonalDeckCardModifications.model_json_schema()["properties"]["quantity"]["description"]
+        )
+        collection_quantity_description = (
+            CollectionCardUpsert.model_json_schema()["properties"]["quantity"]["description"]
+        )
+
+        self.assertIn("Values greater than 1 are allowed.", deck_quantity_description)
+        self.assertIn("Commander decks", deck_quantity_description)
+        self.assertIn("4 copies or fewer", deck_quantity_description)
+        self.assertIn("Any positive integer is allowed.", collection_quantity_description)
 
 
 class FakeCollectionClient:

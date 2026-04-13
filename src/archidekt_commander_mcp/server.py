@@ -845,6 +845,7 @@ class DeckbuildingService:
 
         sorted_results = sort_card_results(results, filters)
         paged_results = paginate_results(sorted_results, filters.page, filters.limit)
+        await self._ensure_archidekt_card_ids(paged_results, game=collection.game)
         total_matches = len(sorted_results)
 
         return SearchResponse(
@@ -878,6 +879,7 @@ class DeckbuildingService:
         mapped_results = [self._map_scryfall_card(card, filters) for card in filtered_cards]
         sorted_results = sort_card_results(mapped_results, filters)
         paged_results = paginate_results(sorted_results, filters.page, filters.limit)
+        await self._ensure_archidekt_card_ids(paged_results, game=collection.game)
 
         return SearchResponse(
             source="scryfall",
@@ -900,6 +902,59 @@ class DeckbuildingService:
             ],
             results=paged_results,
         )
+
+    async def _ensure_archidekt_card_ids(
+        self,
+        results: list[CardResult],
+        *,
+        game: int,
+    ) -> None:
+        missing_results = [
+            result
+            for result in results
+            if not result.archidekt_card_ids and result.name
+        ]
+        if not missing_results:
+            return
+
+        exact_names = list(dict.fromkeys(result.name for result in missing_results if result.name))
+        if not exact_names:
+            return
+
+        catalog_results, _, _ = await self.auth_client.search_cards(
+            ArchidektCardSearchFilters(
+                exact_name=exact_names,
+                game=game,
+                include_tokens=True,
+                all_editions=True,
+            )
+        )
+        candidates_by_name: dict[str, list[Any]] = {}
+        for candidate in catalog_results:
+            lookup_name = (candidate.requested_exact_name or candidate.name).casefold()
+            if lookup_name:
+                candidates_by_name.setdefault(lookup_name, []).append(candidate)
+
+        for result in missing_results:
+            candidates = candidates_by_name.get(result.name.casefold(), [])
+            if not candidates:
+                continue
+
+            matching_set_candidates = [
+                candidate
+                for candidate in candidates
+                if result.set_code
+                and candidate.set_code
+                and candidate.set_code.casefold() == result.set_code.casefold()
+            ]
+            selected = matching_set_candidates or candidates
+            result.archidekt_card_ids = sorted(
+                {
+                    candidate.card_id
+                    for candidate in selected
+                    if candidate.card_id is not None
+                }
+            )
 
     async def _resolve_optional_account(
         self,

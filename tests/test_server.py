@@ -25,9 +25,11 @@ from archidekt_commander_mcp.mcp_auth import (
 )
 from archidekt_commander_mcp.models import (
     ArchidektAccount,
+    ArchidektCardReference,
     ArchidektCardSearchFilters,
     AuthenticatedAccount,
     CardResult,
+    CardSearchFilters,
     CollectionSearchRequest,
     CollectionCardUpsert,
     CollectionCardRecord,
@@ -227,6 +229,42 @@ class FakeAuthLoginClient:
                 PersonalDeckSummary(id=8, name="Graveyard Value", owner_username="tester", owner_id=123),
             ],
         )
+
+
+class FakeCatalogLookupClient:
+    def __init__(self, references_by_name: dict[str, list[ArchidektCardReference]]) -> None:
+        self.references_by_name = {
+            key.casefold(): value for key, value in references_by_name.items()
+        }
+        self.calls: list[ArchidektCardSearchFilters] = []
+
+    async def search_cards(
+        self,
+        filters: ArchidektCardSearchFilters,
+    ) -> tuple[list[ArchidektCardReference], int | None, bool | None]:
+        self.calls.append(filters)
+        results: list[ArchidektCardReference] = []
+        for exact_name in filters.exact_name:
+            matches = self.references_by_name.get(exact_name.casefold(), [])
+            for match in matches:
+                results.append(match.model_copy(update={"requested_exact_name": exact_name}))
+        return results, len(results), False
+
+
+class FakeScryfallClient:
+    def __init__(self, raw_cards: list[dict[str, object]]) -> None:
+        self.raw_cards = raw_cards
+
+    async def search_unowned_cards(
+        self,
+        filters: CardSearchFilters,
+        owned_oracle_ids: set[str],
+        owned_names: set[str],
+    ) -> tuple[list[dict[str, object]], str, bool | None, list[str]]:
+        del filters
+        del owned_oracle_ids
+        del owned_names
+        return self.raw_cards, "name:\"test\"", False, ["Scryfall stub used in tests."]
 
 
 class FakeHttpResponse:
@@ -642,6 +680,156 @@ class ArchidektCatalogSearchTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_search_owned_cards_backfills_archidekt_card_ids_when_snapshot_lacks_them(self) -> None:
+        snapshot = CollectionSnapshot(
+            collection_id=123,
+            owner_id=456,
+            owner_username="tester",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=1,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/123",
+            records=[
+                CollectionCardRecord(
+                    record_id=1,
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                    quantity=1,
+                    foil=False,
+                    modifier=None,
+                    tags=(),
+                    condition_code=None,
+                    language_code=None,
+                    name="Sol Ring",
+                    display_name=None,
+                    oracle_text="{T}: Add {C}{C}.",
+                    mana_cost="{1}",
+                    cmc=1.0,
+                    colors=(),
+                    color_identity=(),
+                    supertypes=(),
+                    types=("Artifact",),
+                    subtypes=(),
+                    type_line="Artifact",
+                    keywords=(),
+                    rarity="uncommon",
+                    set_code="clb",
+                    set_name="Commander Legends: Battle for Baldur's Gate",
+                    commander_legal=True,
+                    oracle_id="sol-ring-oracle",
+                    card_id=None,
+                    printing_id="sol-ring-printing",
+                    edhrec_rank=1,
+                    image_uri=None,
+                    prices={"tcg": 1.25},
+                )
+            ],
+        )
+        service = DeckbuildingService(RuntimeSettings())
+        original_redis = service.redis_client
+        fake_redis = FakeRedis()
+        collection_client = FakeCollectionClient(snapshot)
+        service.redis_client = fake_redis
+        service.cache.redis = fake_redis
+        service.archidekt_client = collection_client
+        service.cache.client = collection_client
+        service.auth_client = FakeCatalogLookupClient(
+            {
+                "Sol Ring": [
+                    ArchidektCardReference(
+                        card_id=150824,
+                        requested_exact_name="Sol Ring",
+                        oracle_id="sol-ring-oracle",
+                        name="Sol Ring",
+                        display_name="Sol Ring",
+                        set_code="clb",
+                        set_name="Commander Legends: Battle for Baldur's Gate",
+                    )
+                ]
+            }
+        )
+        await original_redis.aclose()
+        try:
+            response = await service.search_owned_cards(
+                CollectionLocator(username="tester"),
+                CardSearchFilters(exact_name=["Sol Ring"]),
+            )
+            self.assertEqual(response.results[0].archidekt_card_ids, [150824])
+        finally:
+            await service.http_client.aclose()
+
+    async def test_search_unowned_cards_adds_archidekt_card_ids_for_insertion(self) -> None:
+        snapshot = CollectionSnapshot(
+            collection_id=123,
+            owner_id=456,
+            owner_username="tester",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=0,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/123",
+            records=[],
+        )
+        service = DeckbuildingService(RuntimeSettings())
+        original_redis = service.redis_client
+        fake_redis = FakeRedis()
+        collection_client = FakeCollectionClient(snapshot)
+        service.redis_client = fake_redis
+        service.cache.redis = fake_redis
+        service.archidekt_client = collection_client
+        service.cache.client = collection_client
+        service.scryfall_client = FakeScryfallClient(
+            [
+                {
+                    "name": "Arcane Signet",
+                    "mana_cost": "{2}",
+                    "cmc": 2,
+                    "type_line": "Artifact",
+                    "oracle_text": "{T}: Add one mana of any color in your commander's color identity.",
+                    "colors": [],
+                    "color_identity": [],
+                    "keywords": [],
+                    "rarity": "common",
+                    "set": "cmm",
+                    "set_name": "Commander Masters",
+                    "finishes": ["nonfoil"],
+                    "legalities": {"commander": "legal"},
+                    "edhrec_rank": 10,
+                    "prices": {"usd": "0.75"},
+                    "oracle_id": "arcane-signet-oracle",
+                    "scryfall_uri": "https://scryfall.com/card/cmm/arcane-signet",
+                    "image_uris": {"normal": "https://img.example/arcane-signet.jpg"},
+                }
+            ]
+        )
+        service.auth_client = FakeCatalogLookupClient(
+            {
+                "Arcane Signet": [
+                    ArchidektCardReference(
+                        card_id=150825,
+                        requested_exact_name="Arcane Signet",
+                        oracle_id="arcane-signet-oracle",
+                        name="Arcane Signet",
+                        display_name="Arcane Signet",
+                        set_code="cmm",
+                        set_name="Commander Masters",
+                    )
+                ]
+            }
+        )
+        await original_redis.aclose()
+        try:
+            response = await service.search_unowned_cards(
+                CollectionLocator(username="tester"),
+                CardSearchFilters(exact_name=["Arcane Signet"]),
+            )
+            self.assertEqual(response.results[0].archidekt_card_ids, [150825])
+        finally:
+            await service.http_client.aclose()
+
     async def test_login_archidekt_includes_personal_decks_context(self) -> None:
         service = DeckbuildingService(RuntimeSettings())
         original_redis = service.redis_client

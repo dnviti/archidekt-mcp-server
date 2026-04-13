@@ -152,6 +152,8 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("Connect Archidekt", html)
         self.assertIn("Test Auth Login", html)
         self.assertIn('const authEnabled = true;', html)
+        self.assertIn("window.localStorage.getItem(oauthStorageKey)", html)
+        self.assertIn("function expiresAtFromSeconds(expiresInSeconds)", html)
         self.assertIn("sort_by: unit_price", html)
         self.assertIn("sort_direction: desc", html)
 
@@ -482,6 +484,187 @@ class FakeRedis:
 
 
 class OAuthProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_default_oauth_sessions_do_not_expire(self) -> None:
+        redis_client = FakeRedis()
+        provider = RedisArchidektOAuthProvider(
+            redis_client,
+            key_prefix="archidekt-commander",
+            issuer_url="http://127.0.0.1:8000",
+        )
+        client = OAuthClientInformationFull(
+            client_id="client-1",
+            client_secret="secret",
+            redirect_uris=["https://chat.openai.com/a/oauth/callback"],
+            token_endpoint_auth_method="client_secret_post",
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+            scope=AUTH_SCOPE,
+        )
+        await provider.register_client(client)
+
+        redirect_to_form = await provider.authorize(
+            client,
+            AuthorizationParams(
+                state="state-123",
+                scopes=[AUTH_SCOPE],
+                code_challenge="pkce-challenge",
+                redirect_uri="https://chat.openai.com/a/oauth/callback",
+                redirect_uri_provided_explicitly=True,
+                resource="http://127.0.0.1:8000/mcp",
+            ),
+        )
+        request_id = parse_qs(urlparse(redirect_to_form).query)["request_id"][0]
+        redirect_back = await provider.complete_authorization(
+            request_id,
+            AuthenticatedAccount(token="arch-token", username="tester", user_id=123),
+        )
+        code = parse_qs(urlparse(redirect_back).query)["code"][0]
+        loaded_code = await provider.load_authorization_code(client, code)
+
+        self.assertIsNotNone(loaded_code)
+        assert loaded_code is not None
+
+        token = await provider.exchange_authorization_code(client, loaded_code)
+        self.assertIsNone(token.expires_in)
+        self.assertIsNotNone(token.refresh_token)
+
+        access = await provider.load_access_token(token.access_token)
+        self.assertIsNotNone(access)
+        assert access is not None
+        self.assertIsNone(access.expires_at)
+
+        refresh = await provider.load_refresh_token(client, token.refresh_token or "")
+        self.assertIsNotNone(refresh)
+        assert refresh is not None
+        self.assertIsNone(refresh.expires_at)
+
+        session = await provider.load_session(access.session_id)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertIsNone(session.access_expires_at)
+        self.assertIsNone(session.refresh_expires_at)
+
+        self.assertEqual(await redis_client.ttl(provider._key("access-token", token.access_token)), -1)
+        self.assertEqual(await redis_client.ttl(provider._key("refresh-token", token.refresh_token or "")), -1)
+        self.assertEqual(await redis_client.ttl(provider._key("session", access.session_id)), -1)
+
+    async def test_default_refresh_does_not_revoke_active_access_token(self) -> None:
+        redis_client = FakeRedis()
+        provider = RedisArchidektOAuthProvider(
+            redis_client,
+            key_prefix="archidekt-commander",
+            issuer_url="http://127.0.0.1:8000",
+        )
+        client = OAuthClientInformationFull(
+            client_id="client-1",
+            client_secret="secret",
+            redirect_uris=["https://chat.openai.com/a/oauth/callback"],
+            token_endpoint_auth_method="client_secret_post",
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+            scope=AUTH_SCOPE,
+        )
+        await provider.register_client(client)
+
+        redirect_to_form = await provider.authorize(
+            client,
+            AuthorizationParams(
+                state="state-123",
+                scopes=[AUTH_SCOPE],
+                code_challenge="pkce-challenge",
+                redirect_uri="https://chat.openai.com/a/oauth/callback",
+                redirect_uri_provided_explicitly=True,
+                resource="http://127.0.0.1:8000/mcp",
+            ),
+        )
+        request_id = parse_qs(urlparse(redirect_to_form).query)["request_id"][0]
+        redirect_back = await provider.complete_authorization(
+            request_id,
+            AuthenticatedAccount(token="arch-token", username="tester", user_id=123),
+        )
+        code = parse_qs(urlparse(redirect_back).query)["code"][0]
+        loaded_code = await provider.load_authorization_code(client, code)
+
+        self.assertIsNotNone(loaded_code)
+        assert loaded_code is not None
+
+        token = await provider.exchange_authorization_code(client, loaded_code)
+        refresh = await provider.load_refresh_token(client, token.refresh_token or "")
+        self.assertIsNotNone(refresh)
+        assert refresh is not None
+
+        refreshed = await provider.exchange_refresh_token(client, refresh, [AUTH_SCOPE])
+        self.assertEqual(refreshed.access_token, token.access_token)
+        self.assertEqual(refreshed.refresh_token, token.refresh_token)
+        self.assertIsNotNone(await provider.load_access_token(token.access_token))
+
+    async def test_default_provider_migrates_existing_expiring_session_to_non_expiring(self) -> None:
+        redis_client = FakeRedis()
+        first_provider = RedisArchidektOAuthProvider(
+            redis_client,
+            key_prefix="archidekt-commander",
+            issuer_url="http://127.0.0.1:8000",
+            auth_code_ttl_seconds=600,
+            access_token_ttl_seconds=3600,
+            refresh_token_ttl_seconds=7200,
+        )
+        client = OAuthClientInformationFull(
+            client_id="client-1",
+            client_secret="secret",
+            redirect_uris=["https://chat.openai.com/a/oauth/callback"],
+            token_endpoint_auth_method="client_secret_post",
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+            scope=AUTH_SCOPE,
+        )
+        await first_provider.register_client(client)
+
+        redirect_to_form = await first_provider.authorize(
+            client,
+            AuthorizationParams(
+                state="state-123",
+                scopes=[AUTH_SCOPE],
+                code_challenge="pkce-challenge",
+                redirect_uri="https://chat.openai.com/a/oauth/callback",
+                redirect_uri_provided_explicitly=True,
+                resource="http://127.0.0.1:8000/mcp",
+            ),
+        )
+        request_id = parse_qs(urlparse(redirect_to_form).query)["request_id"][0]
+        redirect_back = await first_provider.complete_authorization(
+            request_id,
+            AuthenticatedAccount(token="arch-token", username="tester", user_id=123),
+        )
+        code = parse_qs(urlparse(redirect_back).query)["code"][0]
+        loaded_code = await first_provider.load_authorization_code(client, code)
+        assert loaded_code is not None
+        token = await first_provider.exchange_authorization_code(client, loaded_code)
+
+        second_provider = RedisArchidektOAuthProvider(
+            redis_client,
+            key_prefix="archidekt-commander",
+            issuer_url="http://127.0.0.1:8000",
+        )
+        access = await second_provider.load_access_token(token.access_token)
+        self.assertIsNotNone(access)
+        assert access is not None
+        self.assertIsNone(access.expires_at)
+
+        refresh = await second_provider.load_refresh_token(client, token.refresh_token or "")
+        self.assertIsNotNone(refresh)
+        assert refresh is not None
+        self.assertIsNone(refresh.expires_at)
+
+        session = await second_provider.load_session(access.session_id)
+        self.assertIsNotNone(session)
+        assert session is not None
+        self.assertIsNone(session.access_expires_at)
+        self.assertIsNone(session.refresh_expires_at)
+
+        self.assertEqual(await redis_client.ttl(second_provider._key("access-token", token.access_token)), -1)
+        self.assertEqual(await redis_client.ttl(second_provider._key("refresh-token", token.refresh_token or "")), -1)
+        self.assertEqual(await redis_client.ttl(second_provider._key("session", access.session_id)), -1)
+
     async def test_authorize_and_exchange_round_trip(self) -> None:
         redis_client = FakeRedis()
         provider = RedisArchidektOAuthProvider(
@@ -1314,6 +1497,7 @@ class OAuthHttpRouteTests(unittest.TestCase):
             self.assertEqual(token_response.status_code, 200)
             access_token = token_response.json()["access_token"]
             self.assertTrue(access_token)
+            self.assertIsNone(token_response.json().get("expires_in"))
 
             login_response = client.post(
                 "/api/login",

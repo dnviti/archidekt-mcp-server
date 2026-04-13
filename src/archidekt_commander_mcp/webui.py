@@ -489,24 +489,37 @@ def render_home_page(settings: RuntimeSettings) -> str:
     }}
 
     function readStoredSession() {{
-      const raw = window.sessionStorage.getItem(oauthStorageKey);
+      const raw = window.localStorage.getItem(oauthStorageKey) || window.sessionStorage.getItem(oauthStorageKey);
       if (!raw) {{
         return null;
       }}
       try {{
-        return JSON.parse(raw);
+        const session = JSON.parse(raw);
+        window.localStorage.setItem(oauthStorageKey, JSON.stringify(session));
+        window.sessionStorage.removeItem(oauthStorageKey);
+        return session;
       }} catch (error) {{
+        window.localStorage.removeItem(oauthStorageKey);
         window.sessionStorage.removeItem(oauthStorageKey);
         return null;
       }}
     }}
 
     function writeStoredSession(session) {{
-      window.sessionStorage.setItem(oauthStorageKey, JSON.stringify(session));
+      window.localStorage.setItem(oauthStorageKey, JSON.stringify(session));
+      window.sessionStorage.removeItem(oauthStorageKey);
     }}
 
     function clearStoredSession() {{
+      window.localStorage.removeItem(oauthStorageKey);
       window.sessionStorage.removeItem(oauthStorageKey);
+    }}
+
+    function expiresAtFromSeconds(expiresInSeconds) {{
+      if (expiresInSeconds == null) {{
+        return null;
+      }}
+      return Date.now() + (expiresInSeconds * 1000);
     }}
 
     function randomString(byteLength = 32) {{
@@ -641,7 +654,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
         ...session,
         access_token: payload.access_token,
         refresh_token: payload.refresh_token || session.refresh_token,
-        expires_at: Date.now() + ((payload.expires_in || 3600) * 1000),
+        expires_at: expiresAtFromSeconds(payload.expires_in),
         scope: payload.scope || session.scope
       }};
       writeStoredSession(refreshed);
@@ -765,7 +778,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
           client_id: registeredClient.client_id,
           access_token: tokenPayload.access_token,
           refresh_token: tokenPayload.refresh_token || null,
-          expires_at: Date.now() + ((tokenPayload.expires_in || 3600) * 1000),
+          expires_at: expiresAtFromSeconds(tokenPayload.expires_in),
           scope: tokenPayload.scope || oauthScope
         }});
 

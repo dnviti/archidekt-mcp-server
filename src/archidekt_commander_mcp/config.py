@@ -34,8 +34,6 @@ class RuntimeSettings(BaseSettings):
     auth_enabled: bool = False
     public_base_url: str | None = None
     auth_code_ttl_seconds: int = Field(default=600, ge=60, le=3600)
-    auth_access_token_ttl_seconds: int = Field(default=86400, ge=300, le=2592000)
-    auth_refresh_token_ttl_seconds: int = Field(default=2592000, ge=3600, le=31536000)
 
     @field_validator("log_level", mode="before")
     @classmethod

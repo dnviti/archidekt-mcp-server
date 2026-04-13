@@ -64,8 +64,8 @@ class AuthSessionRecord(BaseModel):
     resource: str | None = None
     access_token: str
     refresh_token: str
-    access_expires_at: int
-    refresh_expires_at: int
+    access_expires_at: int | None = None
+    refresh_expires_at: int | None = None
     created_at: int
     archidekt_token: str
     archidekt_username: str | None = None
@@ -86,8 +86,8 @@ class RedisArchidektOAuthProvider(
         key_prefix: str,
         issuer_url: str,
         auth_code_ttl_seconds: int = 600,
-        access_token_ttl_seconds: int = 86400,
-        refresh_token_ttl_seconds: int = 2592000,
+        access_token_ttl_seconds: int | None = None,
+        refresh_token_ttl_seconds: int | None = None,
     ) -> None:
         self.redis = redis
         self.key_prefix = key_prefix
@@ -220,7 +220,11 @@ class RedisArchidektOAuthProvider(
         payload = await self._load_json(self._key("refresh-token", refresh_token))
         if payload is None:
             return None
-        return ArchidektRefreshToken.model_validate(payload)
+        loaded_refresh_token = ArchidektRefreshToken.model_validate(payload)
+        _, normalized_refresh_token, _ = await self._migrate_session_to_non_expiring(
+            refresh_token=loaded_refresh_token
+        )
+        return normalized_refresh_token or loaded_refresh_token
 
     async def exchange_refresh_token(
         self,
@@ -228,6 +232,22 @@ class RedisArchidektOAuthProvider(
         refresh_token: ArchidektRefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
+        if self._tokens_never_expire():
+            # Keep long-lived MCP sessions stable even if the client refreshes proactively mid-run.
+            _, normalized_refresh_token, session = await self._migrate_session_to_non_expiring(
+                refresh_token=refresh_token
+            )
+            active_refresh_token = normalized_refresh_token or refresh_token
+            if session is not None:
+                access_token = await self.load_access_token(session.access_token)
+                if access_token is not None:
+                    return OAuthToken(
+                        access_token=access_token.token,
+                        expires_in=None,
+                        refresh_token=active_refresh_token.token,
+                        scope=" ".join(scopes),
+                    )
+
         await self.revoke_token(refresh_token)
         rotated = self._build_session(
             client_id=client.client_id or refresh_token.client_id,
@@ -250,6 +270,11 @@ class RedisArchidektOAuthProvider(
         if payload is None:
             return None
         access_token = ArchidektAccessToken.model_validate(payload)
+        normalized_access_token, _, _ = await self._migrate_session_to_non_expiring(
+            access_token=access_token
+        )
+        if normalized_access_token is not None:
+            access_token = normalized_access_token
         if access_token.expires_at and access_token.expires_at <= int(time.time()):
             await self.revoke_token(access_token)
             return None
@@ -276,7 +301,9 @@ class RedisArchidektOAuthProvider(
         payload = await self._load_json(self._key("session", session_id))
         if payload is None:
             return None
-        return AuthSessionRecord.model_validate(payload)
+        session = AuthSessionRecord.model_validate(payload)
+        _, _, normalized_session = await self._migrate_session_to_non_expiring(session=session)
+        return normalized_session or session
 
     def _build_session(
         self,
@@ -292,8 +319,8 @@ class RedisArchidektOAuthProvider(
         access_token_value = secrets.token_urlsafe(32)
         refresh_token_value = secrets.token_urlsafe(32)
         issued_at = int(time.time())
-        access_expires_at = issued_at + self.access_token_ttl_seconds
-        refresh_expires_at = issued_at + self.refresh_token_ttl_seconds
+        access_expires_at = self._expires_at(issued_at, self.access_token_ttl_seconds)
+        refresh_expires_at = self._expires_at(issued_at, self.refresh_token_ttl_seconds)
         access = ArchidektAccessToken(
             token=access_token_value,
             client_id=client_id,
@@ -347,12 +374,90 @@ class RedisArchidektOAuthProvider(
             refresh.model_dump(mode="json"),
             ex=self.refresh_token_ttl_seconds,
         )
-        session_ttl_seconds = max(self.access_token_ttl_seconds, self.refresh_token_ttl_seconds)
+        session_ttl_seconds = self._session_ttl_seconds()
         await self._store_json(
             self._key("session", record.session_id),
             record.model_dump(mode="json"),
             ex=session_ttl_seconds,
         )
+
+    def _expires_at(self, issued_at: int, ttl_seconds: int | None) -> int | None:
+        if ttl_seconds is None:
+            return None
+        return issued_at + ttl_seconds
+
+    def _session_ttl_seconds(self) -> int | None:
+        ttl_values = [
+            ttl_seconds
+            for ttl_seconds in (self.access_token_ttl_seconds, self.refresh_token_ttl_seconds)
+            if ttl_seconds is not None
+        ]
+        if not ttl_values:
+            return None
+        return max(ttl_values)
+
+    def _tokens_never_expire(self) -> bool:
+        return self.access_token_ttl_seconds is None and self.refresh_token_ttl_seconds is None
+
+    async def _migrate_session_to_non_expiring(
+        self,
+        *,
+        access_token: ArchidektAccessToken | None = None,
+        refresh_token: ArchidektRefreshToken | None = None,
+        session: AuthSessionRecord | None = None,
+    ) -> tuple[ArchidektAccessToken | None, ArchidektRefreshToken | None, AuthSessionRecord | None]:
+        if not self._tokens_never_expire():
+            return access_token, refresh_token, session
+
+        session_id = (
+            getattr(access_token, "session_id", None)
+            or getattr(refresh_token, "session_id", None)
+            or getattr(session, "session_id", None)
+        )
+        if session is None and session_id:
+            session_payload = await self._load_json(self._key("session", session_id))
+            if session_payload is not None:
+                session = AuthSessionRecord.model_validate(session_payload)
+
+        if access_token is None and session is not None:
+            access_payload = await self._load_json(self._key("access-token", session.access_token))
+            if access_payload is not None:
+                access_token = ArchidektAccessToken.model_validate(access_payload)
+
+        if refresh_token is None and session is not None:
+            refresh_payload = await self._load_json(self._key("refresh-token", session.refresh_token))
+            if refresh_payload is not None:
+                refresh_token = ArchidektRefreshToken.model_validate(refresh_payload)
+
+        if access_token is not None and access_token.expires_at is not None:
+            access_token = access_token.model_copy(update={"expires_at": None})
+            await self._store_json(
+                self._key("access-token", access_token.token),
+                access_token.model_dump(mode="json"),
+            )
+
+        if refresh_token is not None and refresh_token.expires_at is not None:
+            refresh_token = refresh_token.model_copy(update={"expires_at": None})
+            await self._store_json(
+                self._key("refresh-token", refresh_token.token),
+                refresh_token.model_dump(mode="json"),
+            )
+
+        if session is not None and (
+            session.access_expires_at is not None or session.refresh_expires_at is not None
+        ):
+            session = session.model_copy(
+                update={
+                    "access_expires_at": None,
+                    "refresh_expires_at": None,
+                }
+            )
+            await self._store_json(
+                self._key("session", session.session_id),
+                session.model_dump(mode="json"),
+            )
+
+        return access_token, refresh_token, session
 
     def _key(self, namespace: str, value: str) -> str:
         return f"{self.key_prefix}:oauth:{namespace}:{value}"

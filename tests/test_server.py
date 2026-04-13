@@ -1047,7 +1047,7 @@ class ArchidektCatalogSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             http_client.calls[0]["headers"],
             {
-                "Authorization": "Token secret",
+                "Authorization": "JWT secret",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },

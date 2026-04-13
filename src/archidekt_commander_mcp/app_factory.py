@@ -35,7 +35,6 @@ from .models import (
     PersonalDeckUpdateInput,
     PersonalDeckUpdateRequest,
 )
-from .server import DeckbuildingService, LOGGER, configure_logging, describe_account, describe_collection_locator
 from .server_contracts import (
     DESTRUCTIVE_WRITE_TOOL_ANNOTATIONS,
     NON_DESTRUCTIVE_WRITE_TOOL_ANNOTATIONS,
@@ -50,6 +49,14 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
+    from .server import (
+        DeckbuildingService,
+        LOGGER,
+        configure_logging,
+        describe_account,
+        describe_collection_locator,
+    )
+
     runtime = runtime_settings or RuntimeSettings()
     service_state: dict[str, DeckbuildingService | None] = {"service": None}
     auth_redis_client = None

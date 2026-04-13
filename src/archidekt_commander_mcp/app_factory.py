@@ -20,7 +20,9 @@ from .models import (
     ArchidektCardSearchRequest,
     ArchidektLoginRequest,
     CardSearchFilters,
+    CollectionCardDelete,
     CollectionCardUpsert,
+    CollectionDeleteRequest,
     CollectionLocator,
     CollectionOverviewRequest,
     CollectionSearchRequest,
@@ -351,6 +353,19 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             ),
         )
 
+    @server.custom_route("/api/collection/delete", methods=["POST"])
+    async def api_delete_collection_entries(request: Request) -> Response:
+        return await _handle_api_request(
+            request,
+            CollectionDeleteRequest,
+            lambda payload: with_service(
+                lambda active_service: active_service.delete_collection_entries(
+                    entries=payload.entries,
+                    account=payload.account,
+                )
+            ),
+        )
+
     @server.custom_route("/api/overview", methods=["POST"])
     async def api_overview(request: Request) -> Response:
         return await _handle_api_request(
@@ -608,7 +623,9 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         annotations=DESTRUCTIVE_WRITE_TOOL_ANNOTATIONS,
         description=(
             "Create or update authenticated collection entries for the logged-in user's own collection using "
-            "Archidekt `card_id` values."
+            "Archidekt `card_id` values. Provide `record_id` when updating an existing collection row; "
+            "omitting it creates a new row. Use `delete_collection_entries` instead of quantity tricks when a "
+            "collection row should be removed."
         ),
     )
     async def upsert_collection_entries(
@@ -622,6 +639,26 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             len(entries),
         )
         response = await active_service.upsert_collection_entries(entries=entries, account=account)
+        return response.model_dump(mode="json")
+
+    @server.tool(
+        annotations=DESTRUCTIVE_WRITE_TOOL_ANNOTATIONS,
+        description=(
+            "Delete one or more authenticated collection entries by `record_id`. Use `search_owned_cards` "
+            "first and reuse the returned `archidekt_record_ids` values."
+        ),
+    )
+    async def delete_collection_entries(
+        entries: list[CollectionCardDelete],
+        account: ArchidektAccount | None = None,
+    ) -> dict:
+        active_service = await get_service()
+        LOGGER.info(
+            "Tool call: delete_collection_entries identity=%s count=%s",
+            describe_account(account),
+            len(entries),
+        )
+        response = await active_service.delete_collection_entries(entries=entries, account=account)
         return response.model_dump(mode="json")
 
     @server.tool(

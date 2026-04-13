@@ -38,10 +38,15 @@ Stateless rules:
 - If the user explicitly asks to create or update a deck on Archidekt, use the authenticated deck and
   collection mutation tools instead of only describing the changes.
 - Collection quantities may be any positive integer.
+- For deck writes, quantity lives inside `modifications.quantity`, not as a top-level field on the card mutation.
 - Deck mutation quantities may be greater than 1 when needed.
 - For Commander decks, only basic lands should normally exceed 1 copy.
 - For non-Commander formats, basic lands may be unlimited and other cards should normally cap at 4 copies.
 - When applying deck writes, prefer one mutation with the exact final `quantity` instead of repeated duplicate adds.
+- For collection writes, provide `record_id` when updating an existing row; omitting `record_id` creates a new row.
+- Use `delete_collection_entries` with collection `record_id` values when removing cards from a collection row.
+- Reuse `archidekt_record_ids` returned by `search_owned_cards` for collection updates and deletes.
+- After an authenticated collection write, the next authenticated read of that same self collection will bypass cached snapshots once.
 
 Filter mapping:
 - Prefer `color_identity` for Commander logic.

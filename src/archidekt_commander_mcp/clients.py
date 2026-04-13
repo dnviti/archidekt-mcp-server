@@ -721,6 +721,27 @@ class ArchidektAuthenticatedClient:
         response.raise_for_status()
         return _ensure_mapping(response.json(), "Archidekt collection upsert")
 
+    async def delete_collection_entries(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        record_ids: list[int],
+    ) -> dict[str, Any]:
+        resolved = await self._coerce_account(account)
+        response = await self.http_client.request(
+            "DELETE",
+            f"{self.settings.normalized_archidekt_base_url}/api/collection/bulk/",
+            content=json.dumps({"ids": [int(record_id) for record_id in record_ids]}),
+            headers=_json_headers(resolved.token),
+        )
+        response.raise_for_status()
+        try:
+            payload = response.json()
+        except Exception:
+            payload = {}
+        if isinstance(payload, dict):
+            return payload
+        return {"deleted_ids": [int(record_id) for record_id in record_ids]}
+
     async def _fetch_curated_self(self, token: str) -> list[PersonalDeckSummary]:
         response = await self.http_client.get(
             f"{self.settings.normalized_archidekt_base_url}/api/decks/curated/self/",
@@ -891,6 +912,8 @@ class ArchidektAuthenticatedClient:
             card.patch_id
             or f"mcp-{index}-{card.card_id or card.custom_card_id or card.deck_relation_id or 'card'}"
         )
+        normalized_action = card.action
+        normalized_categories = list(card.categories)
         modifications = {
             key: value
             for key, value in {
@@ -903,12 +926,18 @@ class ArchidektAuthenticatedClient:
             }.items()
             if value is not None
         }
+        if card.action == "modify" and card.modifications.quantity == 0:
+            normalized_action = "remove"
+            normalized_categories = []
+            modifications = {}
         payload: dict[str, Any] = {
-            "action": card.action,
-            "categories": card.categories,
+            "action": normalized_action,
             "patchId": patch_id,
-            "modifications": modifications,
         }
+        if normalized_categories:
+            payload["categories"] = normalized_categories
+        if modifications:
+            payload["modifications"] = modifications
         if card.card_id is not None:
             payload["cardid"] = card.card_id
         if card.custom_card_id is not None:

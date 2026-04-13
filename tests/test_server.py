@@ -31,6 +31,7 @@ from archidekt_commander_mcp.models import (
     AuthenticatedAccount,
     CardResult,
     CardSearchFilters,
+    CollectionCardDelete,
     CollectionSearchRequest,
     CollectionCardUpsert,
     CollectionCardRecord,
@@ -121,6 +122,7 @@ class HttpRouteTests(unittest.TestCase):
         self.assertFalse(tools_by_name["create_personal_deck"].annotations.destructiveHint)
         self.assertTrue(tools_by_name["modify_personal_deck_cards"].annotations.destructiveHint)
         self.assertTrue(tools_by_name["delete_personal_deck"].annotations.destructiveHint)
+        self.assertTrue(tools_by_name["delete_collection_entries"].annotations.destructiveHint)
         self.assertFalse(tools_by_name["refresh_collection_cache"].annotations.readOnlyHint)
 
 
@@ -156,12 +158,18 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("window.localStorage.getItem(oauthStorageKey)", html)
         self.assertIn("function expiresAtFromSeconds(expiresInSeconds)", html)
         self.assertIn("Deck writes may use `modifications.quantity` values greater than 1 when needed.", html)
+        self.assertIn("quantity belongs in `modifications.quantity`", html)
+        self.assertIn("provide `record_id` to update an existing row", html)
+        self.assertIn("Use `delete_collection_entries` with `archidekt_record_ids`", html)
         self.assertIn("non-basic cards should normally stay at 4 copies or fewer", html)
         self.assertIn("sort_by: unit_price", html)
         self.assertIn("sort_direction: desc", html)
 
     def test_server_instructions_explain_quantity_rules(self) -> None:
         self.assertIn("Collection quantities may be any positive integer.", SERVER_INSTRUCTIONS)
+        self.assertIn("quantity lives inside `modifications.quantity`", SERVER_INSTRUCTIONS)
+        self.assertIn("provide `record_id` when updating an existing row", SERVER_INSTRUCTIONS)
+        self.assertIn("Use `delete_collection_entries`", SERVER_INSTRUCTIONS)
         self.assertIn("For Commander decks, only basic lands should normally exceed 1 copy.", SERVER_INSTRUCTIONS)
         self.assertIn("use at most `4` copies of a non-basic card", SERVER_INSTRUCTIONS)
 
@@ -172,11 +180,19 @@ class WebUiTests(unittest.TestCase):
         collection_quantity_description = (
             CollectionCardUpsert.model_json_schema()["properties"]["quantity"]["description"]
         )
+        collection_record_id_description = (
+            CollectionCardUpsert.model_json_schema()["properties"]["record_id"]["description"]
+        )
+        collection_delete_record_id_description = (
+            CollectionCardDelete.model_json_schema()["properties"]["record_id"]["description"]
+        )
 
         self.assertIn("Values greater than 1 are allowed.", deck_quantity_description)
         self.assertIn("Commander decks", deck_quantity_description)
         self.assertIn("4 copies or fewer", deck_quantity_description)
         self.assertIn("Any positive integer is allowed.", collection_quantity_description)
+        self.assertIn("update an existing row", collection_record_id_description)
+        self.assertIn("archidekt_record_ids", collection_delete_record_id_description)
 
 
 class FakeCollectionClient:
@@ -199,6 +215,7 @@ class FakeCollectionClient:
 class FakeAuthMutationClient:
     def __init__(self) -> None:
         self.upsert_calls: list[CollectionCardUpsert] = []
+        self.delete_calls: list[list[int]] = []
         self.modify_calls: list[list[object]] = []
 
     async def upsert_collection_entry(
@@ -209,6 +226,15 @@ class FakeAuthMutationClient:
         del account
         self.upsert_calls.append(entry)
         return {"id": entry.record_id or 9001, "card": entry.card_id, "quantity": entry.quantity}
+
+    async def delete_collection_entries(
+        self,
+        account: AuthenticatedAccount,
+        record_ids: list[int],
+    ) -> dict[str, object]:
+        del account
+        self.delete_calls.append(record_ids)
+        return {"deleted_ids": record_ids}
 
     async def fetch_deck_cards(
         self,
@@ -255,6 +281,27 @@ class FakeAuthMutationClient:
         del deck_id
         self.modify_calls.append(cards)
         return {"successful_count": len(cards), "failed_count": 0}
+
+    async def list_personal_decks(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        page_size: int = 100,
+    ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
+        del page_size
+        if isinstance(account, AuthenticatedAccount):
+            resolved = account.model_copy(
+                update={
+                    "username": account.username or "private-user",
+                    "user_id": account.user_id or 321,
+                }
+            )
+        else:
+            resolved = AuthenticatedAccount(
+                token=account.token or "secret",
+                username=account.username or "private-user",
+                user_id=account.user_id or 321,
+            )
+        return resolved, []
 
 
 class FakeAuthLoginClient:
@@ -365,6 +412,28 @@ class FakeDeckMutationHttpClient:
         if card.get("patchId") == "ok-card":
             return FakeStatusHttpResponse(201, {"add": [{"deckRelationId": 99, "cardId": card.get("cardid")}]})
         return FakeStatusHttpResponse(400, {"error": "bad card"})
+
+
+class FakeCollectionDeleteHttpClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        content: str | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> FakeStatusHttpResponse:
+        self.calls.append(
+            {
+                "method": method,
+                "url": url,
+                "content": content,
+                "headers": dict(headers or {}),
+            }
+        )
+        return FakeStatusHttpResponse(200, {"deleted_ids": [9001, 9002]})
 
 
 class FakeCardCatalogHttpClient:
@@ -939,6 +1008,51 @@ class ArchidektCatalogSearchTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload["modifications"], {"quantity": 1})
 
+    async def test_deck_card_mutation_payload_turns_modify_quantity_zero_into_remove(self) -> None:
+        client = ArchidektAuthenticatedClient(FakeDeckMutationHttpClient(), RuntimeSettings())
+        payload = client._deck_card_mutation_payload(
+            PersonalDeckCardMutation(
+                action="modify",
+                deck_relation_id=77,
+                patch_id="remove-zero-test",
+                categories=["Ramp"],
+                modifications=PersonalDeckCardModifications(quantity=0, label="ignored"),
+            ),
+            1,
+        )
+
+        self.assertEqual(payload["action"], "remove")
+        self.assertEqual(payload["patchId"], "remove-zero-test")
+        self.assertEqual(payload["deckRelationId"], 77)
+        self.assertNotIn("categories", payload)
+        self.assertNotIn("modifications", payload)
+
+    async def test_delete_collection_entries_uses_bulk_delete_payload(self) -> None:
+        http_client = FakeCollectionDeleteHttpClient()
+        client = ArchidektAuthenticatedClient(http_client, RuntimeSettings())
+
+        result = await client.delete_collection_entries(
+            AuthenticatedAccount(token="secret", username="tester", user_id=1),
+            [9001, 9002],
+        )
+
+        self.assertEqual(result["deleted_ids"], [9001, 9002])
+        self.assertEqual(len(http_client.calls), 1)
+        self.assertEqual(http_client.calls[0]["method"], "DELETE")
+        self.assertTrue(str(http_client.calls[0]["url"]).endswith("/api/collection/bulk/"))
+        self.assertEqual(
+            json.loads(str(http_client.calls[0]["content"])),
+            {"ids": [9001, 9002]},
+        )
+        self.assertEqual(
+            http_client.calls[0]["headers"],
+            {
+                "Authorization": "Token secret",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+
     async def test_private_snapshot_reuses_redis_cache_across_services(self) -> None:
         snapshot = CollectionSnapshot(
             collection_id=321,
@@ -1326,7 +1440,8 @@ class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
             records=[],
         )
         redis_client = FakeRedis()
-        account = AuthenticatedAccount(token="secret", username="private-user", user_id=321)
+        account = AuthenticatedAccount(token="secret")
+        resolved_account = AuthenticatedAccount(token="secret", username="private-user", user_id=321)
         private_locator = CollectionLocator(collection_id=321)
         public_locator = CollectionLocator(username="private-user")
 
@@ -1344,7 +1459,7 @@ class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
 
             private_key = service._private_redis_key(
                 "collection",
-                service._private_snapshot_cache_key(private_locator, account),
+                service._private_snapshot_cache_key(private_locator, resolved_account),
             )
             public_key = service.cache._redis_key(public_locator.cache_key)
 
@@ -1357,8 +1472,113 @@ class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(response.affected_count, 1)
+            self.assertEqual(response.account_username, "private-user")
             self.assertNotIn(private_key, redis_client.storage)
             self.assertNotIn(public_key, redis_client.storage)
+        finally:
+            await service.http_client.aclose()
+
+    async def test_delete_collection_entries_invalidates_public_and_private_caches(self) -> None:
+        snapshot = CollectionSnapshot(
+            collection_id=321,
+            owner_id=321,
+            owner_username="private-user",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=1,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/321",
+            records=[],
+        )
+        redis_client = FakeRedis()
+        account = AuthenticatedAccount(token="secret")
+        resolved_account = AuthenticatedAccount(token="secret", username="private-user", user_id=321)
+        private_locator = CollectionLocator(collection_id=321)
+        public_locator = CollectionLocator(username="private-user")
+
+        service = DeckbuildingService(RuntimeSettings())
+        original_redis = service.redis_client
+        service.redis_client = redis_client
+        service.cache.redis = redis_client
+        service.archidekt_client = FakeCollectionClient(snapshot)
+        service.cache.client = service.archidekt_client
+        fake_auth_client = FakeAuthMutationClient()
+        service.auth_client = fake_auth_client
+        await original_redis.aclose()
+        try:
+            await service.get_snapshot(private_locator, account=account)
+            await service.cache.get_snapshot(public_locator)
+
+            private_key = service._private_redis_key(
+                "collection",
+                service._private_snapshot_cache_key(private_locator, resolved_account),
+            )
+            public_key = service.cache._redis_key(public_locator.cache_key)
+
+            self.assertIn(private_key, redis_client.storage)
+            self.assertIn(public_key, redis_client.storage)
+
+            response = await service.delete_collection_entries(
+                entries=[CollectionCardDelete(record_id=404552200, game=1)],
+                account=account,
+            )
+
+            self.assertEqual(response.affected_count, 1)
+            self.assertEqual(response.action, "delete")
+            self.assertEqual(response.account_username, "private-user")
+            self.assertEqual(fake_auth_client.delete_calls, [[404552200]])
+            self.assertNotIn(private_key, redis_client.storage)
+            self.assertNotIn(public_key, redis_client.storage)
+        finally:
+            await service.http_client.aclose()
+
+    async def test_recent_collection_write_bypasses_authenticated_snapshot_cache_once(self) -> None:
+        snapshot = CollectionSnapshot(
+            collection_id=321,
+            owner_id=321,
+            owner_username="private-user",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=1,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/321",
+            records=[],
+        )
+        account = AuthenticatedAccount(token="secret")
+        resolved_account = AuthenticatedAccount(token="secret", username="private-user", user_id=321)
+        locator = CollectionLocator(collection_id=321)
+
+        service = DeckbuildingService(RuntimeSettings())
+        original_redis = service.redis_client
+        redis_client = FakeRedis()
+        collection_client = FakeCollectionClient(snapshot)
+        service.redis_client = redis_client
+        service.cache.redis = redis_client
+        service.archidekt_client = collection_client
+        service.cache.client = collection_client
+        service.auth_client = FakeAuthMutationClient()
+        await original_redis.aclose()
+        try:
+            await service.upsert_collection_entries(
+                entries=[CollectionCardUpsert(card_id=150824, quantity=1, game=1)],
+                account=account,
+            )
+            cache_key = service._private_snapshot_cache_key(locator, resolved_account)
+            service._store_private_memory_cache(
+                service._private_snapshot_cache,
+                cache_key,
+                snapshot,
+            )
+
+            first_result = await service.get_snapshot(locator, account=account)
+            second_result = await service.get_snapshot(locator, account=account)
+
+            self.assertEqual(first_result.collection_id, 321)
+            self.assertEqual(second_result.collection_id, 321)
+            self.assertEqual(collection_client.calls, 1)
+            self.assertFalse(service._recent_collection_write_markers)
         finally:
             await service.http_client.aclose()
 

@@ -70,6 +70,7 @@ _DECK_FORMAT_DESCRIPTION = (
 
 _DECK_MUTATION_QUANTITY_DESCRIPTION = (
     "Exact quantity for this deck card after the mutation. Values greater than 1 are allowed. "
+    "On `modify`, a quantity of 0 means remove the card from the deck. "
     "For Commander decks, only basic lands should normally exceed 1 copy. "
     "For non-Commander formats, non-basic cards should normally stay at 4 copies or fewer, "
     "while basic lands may be unlimited."
@@ -77,6 +78,16 @@ _DECK_MUTATION_QUANTITY_DESCRIPTION = (
 
 _COLLECTION_QUANTITY_DESCRIPTION = (
     "Owned copies to store in the collection. Any positive integer is allowed."
+)
+
+_COLLECTION_RECORD_ID_DESCRIPTION = (
+    "Existing Archidekt collection record id. Provide this to update an existing row; "
+    "omit it to create a new collection record."
+)
+
+_COLLECTION_DELETE_RECORD_ID_DESCRIPTION = (
+    "Existing Archidekt collection record id to delete. Use `search_owned_cards` and reuse "
+    "the returned `archidekt_record_ids` values."
 )
 
 
@@ -802,7 +813,11 @@ class PersonalDeckMutationResponse(BaseModel):
 
 
 class CollectionCardUpsert(BaseModel):
-    record_id: int | None = Field(default=None, ge=1)
+    record_id: int | None = Field(
+        default=None,
+        ge=1,
+        description=_COLLECTION_RECORD_ID_DESCRIPTION,
+    )
     card_id: int = Field(ge=1)
     quantity: int = Field(ge=1, description=_COLLECTION_QUANTITY_DESCRIPTION)
     game: int = Field(default=1, ge=1, le=3)
@@ -834,16 +849,31 @@ class CollectionUpsertRequest(BaseModel):
     entries: list[CollectionCardUpsert] = Field(min_length=1)
 
 
+class CollectionCardDelete(BaseModel):
+    record_id: int = Field(ge=1, description=_COLLECTION_DELETE_RECORD_ID_DESCRIPTION)
+    game: int | None = Field(
+        default=None,
+        ge=1,
+        le=3,
+        description="Optional Archidekt game id used only to narrow local cache invalidation.",
+    )
+
+
+class CollectionDeleteRequest(BaseModel):
+    account: ArchidektAccount | None = None
+    entries: list[CollectionCardDelete] = Field(min_length=1)
+
+
 class CollectionCardUpsertResult(BaseModel):
-    operation: Literal["created", "updated"]
+    operation: Literal["created", "updated", "deleted"]
     record_id: int | None = None
-    card_id: int
-    game: int
+    card_id: int | None = None
+    game: int | None = None
     result: dict[str, object] = Field(default_factory=dict)
 
 
 class CollectionMutationResponse(BaseModel):
-    action: Literal["upsert"]
+    action: Literal["upsert", "delete"]
     account_username: str | None = None
     affected_count: int
     processed_at: datetime

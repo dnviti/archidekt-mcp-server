@@ -57,7 +57,9 @@ if __package__ in {None, ""}:
         AuthenticatedAccount,
         CardResult,
         CardSearchFilters,
+        CollectionCardDelete,
         CollectionCardUpsert,
+        CollectionDeleteRequest,
         CollectionLocator,
         CollectionMutationResponse,
         CollectionOverview,
@@ -117,7 +119,9 @@ else:
         AuthenticatedAccount,
         CardResult,
         CardSearchFilters,
+        CollectionCardDelete,
         CollectionCardUpsert,
+        CollectionDeleteRequest,
         CollectionLocator,
         CollectionMutationResponse,
         CollectionOverview,
@@ -221,6 +225,7 @@ class DeckbuildingService:
         self._locks: dict[str, asyncio.Lock] = {}
         self._private_snapshot_cache: dict[str, tuple[datetime, Any]] = {}
         self._personal_deck_usage_cache: dict[str, tuple[datetime, PersonalDeckUsageSnapshot]] = {}
+        self._recent_collection_write_markers: dict[str, datetime] = {}
 
     def _lock_for_key(self, key: str) -> asyncio.Lock:
         return self._locks.setdefault(key, asyncio.Lock())
@@ -243,8 +248,17 @@ class DeckbuildingService:
     def _private_usage_cache_key(self, account: AuthenticatedAccount) -> str:
         return f"private-decks:{self._private_account_cache_key(account)}"
 
+    def _collection_write_marker_key(self, account: AuthenticatedAccount, game: int) -> str:
+        return f"{self._private_account_cache_key(account)}:game:{game}"
+
     def _private_redis_key(self, namespace: str, cache_key: str) -> str:
         return f"{self.settings.redis_key_prefix}:private:{namespace}:{cache_key}"
+
+    async def _ensure_account_identity(self, account: AuthenticatedAccount) -> AuthenticatedAccount:
+        if account.username and account.user_id is not None:
+            return account
+        resolved_account, _ = await self.auth_client.list_personal_decks(account)
+        return resolved_account
 
     def _load_private_memory_cache(self, cache: dict[str, tuple[datetime, Any]], key: str) -> Any | None:
         entry = cache.get(key)
@@ -412,6 +426,45 @@ class DeckbuildingService:
                 locators[locator.cache_key] = locator
         return list(locators.values())
 
+    def _is_self_collection_locator(
+        self,
+        collection: CollectionLocator,
+        account: AuthenticatedAccount,
+    ) -> bool:
+        valid_cache_keys = {
+            locator.cache_key
+            for locator in self._account_collection_locators(account, games={collection.game})
+        }
+        return collection.cache_key in valid_cache_keys
+
+    def _mark_recent_collection_write(
+        self,
+        account: AuthenticatedAccount,
+        games: set[int],
+    ) -> None:
+        marked_at = datetime.now(UTC)
+        for game in games:
+            self._recent_collection_write_markers[
+                self._collection_write_marker_key(account, game)
+            ] = marked_at
+
+    def _consume_recent_collection_write(
+        self,
+        collection: CollectionLocator,
+        account: AuthenticatedAccount,
+    ) -> bool:
+        if not self._is_self_collection_locator(collection, account):
+            return False
+        marker_key = self._collection_write_marker_key(account, collection.game)
+        marked_at = self._recent_collection_write_markers.get(marker_key)
+        if marked_at is None:
+            return False
+        if (datetime.now(UTC) - marked_at) > timedelta(minutes=2):
+            self._recent_collection_write_markers.pop(marker_key, None)
+            return False
+        self._recent_collection_write_markers.pop(marker_key, None)
+        return True
+
     async def _invalidate_personal_deck_usage_cache(self, account: AuthenticatedAccount) -> None:
         cache_key = self._private_usage_cache_key(account)
         self._personal_deck_usage_cache.pop(cache_key, None)
@@ -439,6 +492,14 @@ class DeckbuildingService:
                 return await self.cache.get_snapshot(collection, force_refresh=force_refresh)
 
         resolved_account = await self._coerce_account(account)
+        if resolved_account.username is None or resolved_account.user_id is None:
+            resolved_account = await self._ensure_account_identity(resolved_account)
+        if not force_refresh and self._consume_recent_collection_write(collection, resolved_account):
+            force_refresh = True
+            LOGGER.info(
+                "Bypassing cached snapshot for %s after a recent authenticated collection write",
+                collection.cache_key,
+            )
         cache_key = self._private_snapshot_cache_key(collection, resolved_account)
         async with self._lock_for_key(cache_key):
             if not force_refresh:
@@ -747,7 +808,7 @@ class DeckbuildingService:
         entries: list[CollectionCardUpsert],
         account: ArchidektAccount | None = None,
     ) -> CollectionMutationResponse:
-        resolved_account = await self._coerce_account(account)
+        resolved_account = await self._ensure_account_identity(await self._coerce_account(account))
         results = []
         affected_games: set[int] = set()
         for entry in entries:
@@ -764,6 +825,7 @@ class DeckbuildingService:
             affected_games.add(entry.game)
 
         await self._invalidate_collection_caches(resolved_account, affected_games)
+        self._mark_recent_collection_write(resolved_account, affected_games)
         return CollectionMutationResponse(
             action="upsert",
             account_username=resolved_account.username,
@@ -771,9 +833,43 @@ class DeckbuildingService:
             processed_at=datetime.now(UTC),
             notes=[
                 "Public and authenticated collection caches were invalidated for the affected game(s).",
+                "The next authenticated read of the same self collection will bypass cached snapshots once to reduce stale reads after this write.",
                 "Use `search_archidekt_cards` or `search_owned_cards` to source Archidekt `card_id` values for later writes.",
             ],
             results=results,
+        )
+
+    async def delete_collection_entries(
+        self,
+        entries: list[CollectionCardDelete],
+        account: ArchidektAccount | None = None,
+    ) -> CollectionMutationResponse:
+        resolved_account = await self._ensure_account_identity(await self._coerce_account(account))
+        record_ids = [entry.record_id for entry in entries]
+        payload = await self.auth_client.delete_collection_entries(resolved_account, record_ids)
+        affected_games = {entry.game for entry in entries if entry.game is not None} or {1, 2, 3}
+
+        await self._invalidate_collection_caches(resolved_account, affected_games)
+        self._mark_recent_collection_write(resolved_account, affected_games)
+        return CollectionMutationResponse(
+            action="delete",
+            account_username=resolved_account.username,
+            affected_count=len(entries),
+            processed_at=datetime.now(UTC),
+            notes=[
+                "Public and authenticated collection caches were invalidated for the affected game(s).",
+                "The next authenticated read of the same self collection will bypass cached snapshots once to reduce stale reads after this write.",
+                "Use `search_owned_cards` to confirm that the deleted record ids no longer appear in the collection snapshot.",
+            ],
+            results=[
+                {
+                    "operation": "deleted",
+                    "record_id": entry.record_id,
+                    "game": entry.game,
+                    "result": payload,
+                }
+                for entry in entries
+            ],
         )
 
     async def get_collection_overview(

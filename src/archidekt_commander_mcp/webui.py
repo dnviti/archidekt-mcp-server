@@ -877,6 +877,8 @@ def render_home_page(settings: RuntimeSettings) -> str:
         "- Use `get_collection_overview` whenever you need context before making recommendations.",
         "- Use `list_personal_decks` when you need the user's own decks.",
         "- Use `search_archidekt_cards` to resolve Archidekt `card_id` values before deck or collection writes.",
+        "- When you need several exact card lookups, call `search_archidekt_cards` once with `exact_name` as a list.",
+        "- Use `requested_exact_name` in the response to map returned printings back to the requested card names.",
         "- Use `get_personal_deck_cards` before editing an existing deck so you have fresh `deck_relation_id` values.",
         "- Use `search_owned_cards` only for owned cards.",
         "- Use `search_unowned_cards` only for missing cards.",

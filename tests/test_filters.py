@@ -14,6 +14,7 @@ from archidekt_commander_mcp.filtering import (
     sort_card_results,
 )
 from archidekt_commander_mcp.models import CardResult, CardSearchFilters, CollectionCardRecord
+from archidekt_commander_mcp.models import ArchidektCardSearchFilters
 
 
 class FilterTests(unittest.TestCase):
@@ -162,6 +163,13 @@ class FilterTests(unittest.TestCase):
     def test_map_scryfall_order_supports_rarity(self) -> None:
         filters = CardSearchFilters(sort_by="rarity_desc")
         self.assertEqual(map_scryfall_order(filters.sort_by, filters.price_source), "rarity")
+
+    def test_archidekt_card_search_filters_accept_single_or_multiple_exact_names(self) -> None:
+        single = ArchidektCardSearchFilters(exact_name="Sol Ring")
+        self.assertEqual(single.exact_name, ["Sol Ring"])
+
+        multiple = ArchidektCardSearchFilters(exact_name=["Sol Ring", "Arcane Signet"])
+        self.assertEqual(multiple.exact_name, ["Sol Ring", "Arcane Signet"])
 
 
 if __name__ == "__main__":

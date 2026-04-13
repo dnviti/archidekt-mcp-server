@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -504,21 +505,44 @@ class ArchidektAuthenticatedClient:
         self,
         filters: ArchidektCardSearchFilters,
     ) -> tuple[list[ArchidektCardReference], int | None, bool | None]:
-        params: dict[str, Any] = {"page": filters.page, "game": filters.game}
-        if filters.exact_name:
-            params["name"] = filters.exact_name
-            params["exact"] = ""
-        elif filters.query:
-            params["nameSearch"] = filters.query
-        if filters.edition_code:
-            params["edition"] = filters.edition_code
-        if filters.include_tokens:
-            params["includeTokens"] = ""
-        if filters.include_digital:
-            params["includeDigital"] = ""
-        if not filters.all_editions:
-            params["unique"] = ""
+        exact_names = list(dict.fromkeys(filters.exact_name))
+        if len(exact_names) <= 1:
+            requested_exact_name = exact_names[0] if exact_names else None
+            return await self._search_cards_once(filters, requested_exact_name=requested_exact_name)
 
+        searches = await asyncio.gather(
+            *[
+                self._search_cards_once(filters, requested_exact_name=exact_name)
+                for exact_name in exact_names
+            ]
+        )
+        combined_results: list[ArchidektCardReference] = []
+        total_matches_parts: list[int] = []
+        has_more_flags: list[bool | None] = []
+
+        for mapped, total_matches, has_more in searches:
+            combined_results.extend(mapped)
+            if total_matches is not None:
+                total_matches_parts.append(total_matches)
+            has_more_flags.append(has_more)
+
+        combined_total_matches = (
+            sum(total_matches_parts) if len(total_matches_parts) == len(searches) else None
+        )
+        if any(flag is True for flag in has_more_flags):
+            combined_has_more: bool | None = True
+        elif all(flag is False for flag in has_more_flags):
+            combined_has_more = False
+        else:
+            combined_has_more = None
+        return combined_results, combined_total_matches, combined_has_more
+
+    async def _search_cards_once(
+        self,
+        filters: ArchidektCardSearchFilters,
+        requested_exact_name: str | None = None,
+    ) -> tuple[list[ArchidektCardReference], int | None, bool | None]:
+        params = self._card_search_params(filters, requested_exact_name=requested_exact_name)
         response = await self.http_client.get(
             f"{self.settings.normalized_archidekt_base_url}/api/cards/v2/",
             params=params,
@@ -531,7 +555,7 @@ class ArchidektAuthenticatedClient:
 
         results = payload.get("results") or []
         mapped = [
-            self._map_archidekt_card_reference(item)
+            self._map_archidekt_card_reference(item, requested_exact_name=requested_exact_name)
             for item in results
             if isinstance(item, dict)
         ]
@@ -697,12 +721,38 @@ class ArchidektAuthenticatedClient:
             },
         )
 
-    def _map_archidekt_card_reference(self, payload: dict[str, Any]) -> ArchidektCardReference:
+    def _card_search_params(
+        self,
+        filters: ArchidektCardSearchFilters,
+        requested_exact_name: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"page": filters.page, "game": filters.game}
+        if requested_exact_name:
+            params["name"] = requested_exact_name
+            params["exact"] = ""
+        elif filters.query:
+            params["nameSearch"] = filters.query
+        if filters.edition_code:
+            params["edition"] = filters.edition_code
+        if filters.include_tokens:
+            params["includeTokens"] = ""
+        if filters.include_digital:
+            params["includeDigital"] = ""
+        if not filters.all_editions:
+            params["unique"] = ""
+        return params
+
+    def _map_archidekt_card_reference(
+        self,
+        payload: dict[str, Any],
+        requested_exact_name: str | None = None,
+    ) -> ArchidektCardReference:
         oracle_card = payload.get("oracleCard") or {}
         edition = payload.get("edition") or {}
         prices = payload.get("prices") or {}
         return ArchidektCardReference(
             card_id=int(payload["id"]),
+            requested_exact_name=requested_exact_name,
             uid=_compact_text(payload.get("uid")),
             oracle_card_id=_safe_int(oracle_card.get("id")),
             oracle_id=_compact_text(oracle_card.get("uid")),

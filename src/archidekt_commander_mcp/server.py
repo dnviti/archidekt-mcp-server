@@ -174,6 +174,8 @@ Stateless rules:
   deck list so the model immediately knows which decks already exist on the account.
 - If you need Archidekt `card_id` values for deck or collection writes, call `search_archidekt_cards`
   first, or reuse `archidekt_card_ids` returned by `search_owned_cards`.
+- When you need `card_id` values for several specific cards at once, call `search_archidekt_cards`
+  with `exact_name` as a list in one request instead of making one call per card.
 - If the user asks about owned cards, use `search_owned_cards`.
 - If the user asks about missing cards or upgrades, use `search_unowned_cards`.
 - Use `get_collection_overview` when you need context on the owned pool.
@@ -606,6 +608,26 @@ class DeckbuildingService:
             "Use `card_id` values from this response when creating deck entries or collection entries.",
             "For cards already in the user's collection, `search_owned_cards` may already expose matching `archidekt_card_ids`.",
         ]
+        if filters.exact_name:
+            notes.append(
+                "Use `requested_exact_name` on each result to match returned printings back to the requested card names."
+            )
+            if len(filters.exact_name) > 1:
+                notes.append(
+                    "This response aggregates multiple exact-name Archidekt lookups into one batch for the model."
+                )
+                matched_names = {
+                    (result.requested_exact_name or "").casefold()
+                    for result in results
+                    if result.requested_exact_name
+                }
+                missing_names = [
+                    name for name in filters.exact_name if name.casefold() not in matched_names
+                ]
+                if missing_names:
+                    notes.append(
+                        "No exact Archidekt match was returned for: " + ", ".join(missing_names) + "."
+                    )
         return ArchidektCardSearchResponse(
             page=filters.page,
             returned_count=len(results),
@@ -1532,6 +1554,7 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             "When the server is already connected through MCP OAuth, call login_archidekt without an account payload. "
             "When search_owned_cards returns personal_deck_usage, ask whether already-slotted cards may be reused. "
             "Use search_archidekt_cards to resolve Archidekt card ids before deck or collection writes. "
+            "If many exact card names must be checked, send them together as one `exact_name` list instead of one call per card. "
             "When the user requests sorting, prefer canonical filters such as `sort_by=unit_price` with "
             "`sort_direction=desc` instead of shorthand `sort` strings."
         )
@@ -1566,7 +1589,8 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
     @server.tool(
         description=(
             "Search the Archidekt card catalog and return Archidekt `card_id` values that can be reused in "
-            "deck or collection write operations."
+            "deck or collection write operations. `exact_name` may be one name or a list of exact card names "
+            "to batch several lookups in one request."
         )
     )
     async def search_archidekt_cards(filters: ArchidektCardSearchFilters) -> dict:

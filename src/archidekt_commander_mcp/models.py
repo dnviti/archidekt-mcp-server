@@ -481,7 +481,7 @@ class CollectionSearchRequest(BaseModel):
 
 class ArchidektCardSearchFilters(BaseModel):
     query: str | None = None
-    exact_name: str | None = None
+    exact_name: list[str] = Field(default_factory=list)
     edition_code: str | None = None
     game: int = Field(default=1, ge=1, le=3)
     include_tokens: bool = False
@@ -489,10 +489,21 @@ class ArchidektCardSearchFilters(BaseModel):
     all_editions: bool = False
     page: int = Field(default=1, ge=1, le=1000)
 
-    @field_validator("query", "exact_name", "edition_code", mode="before")
+    @field_validator("query", "edition_code", mode="before")
     @classmethod
     def normalize_optional_search_terms(cls, value: object) -> str | None:
         return _normalize_optional_text(value)
+
+    @field_validator("exact_name", mode="before")
+    @classmethod
+    def normalize_exact_names(cls, value: object) -> object:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return _normalize_string_list([value])
+        if isinstance(value, list):
+            return _normalize_string_list([str(item) for item in value])
+        return value
 
     @model_validator(mode="after")
     def validate_lookup(self) -> "ArchidektCardSearchFilters":
@@ -562,6 +573,7 @@ class PersonalDecksResponse(BaseModel):
 
 class ArchidektCardReference(BaseModel):
     card_id: int
+    requested_exact_name: str | None = None
     uid: str | None = None
     oracle_card_id: int | None = None
     oracle_id: str | None = None

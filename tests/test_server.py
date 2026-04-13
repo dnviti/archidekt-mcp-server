@@ -16,7 +16,7 @@ from mcp.shared.auth import OAuthClientInformationFull
 from pydantic import ValidationError
 from starlette.testclient import TestClient
 
-from archidekt_commander_mcp.clients import CollectionCache
+from archidekt_commander_mcp.clients import ArchidektAuthenticatedClient, CollectionCache
 from archidekt_commander_mcp.config import RuntimeSettings
 from archidekt_commander_mcp.mcp_auth import (
     AUTH_SCOPE,
@@ -25,6 +25,7 @@ from archidekt_commander_mcp.mcp_auth import (
 )
 from archidekt_commander_mcp.models import (
     ArchidektAccount,
+    ArchidektCardSearchFilters,
     AuthenticatedAccount,
     CardResult,
     CollectionSearchRequest,
@@ -226,6 +227,107 @@ class FakeAuthLoginClient:
                 PersonalDeckSummary(id=8, name="Graveyard Value", owner_username="tester", owner_id=123),
             ],
         )
+
+
+class FakeHttpResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+
+class FakeCardCatalogHttpClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def get(
+        self,
+        url: str,
+        params: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> FakeHttpResponse:
+        recorded_params = dict(params or {})
+        self.calls.append(
+            {
+                "url": url,
+                "params": recorded_params,
+                "headers": dict(headers or {}),
+            }
+        )
+        exact_name = str(recorded_params.get("name") or "")
+        payloads = {
+            "Sol Ring": {
+                "count": 1,
+                "next": None,
+                "results": [
+                    {
+                        "id": 150824,
+                        "uid": "sol-ring-printing",
+                        "displayName": "Sol Ring",
+                        "rarity": "uncommon",
+                        "releasedAt": "2024-01-01T00:00:00Z",
+                        "prices": {"tcg": 1.25},
+                        "owned": 3,
+                        "oracleCard": {
+                            "id": 15342,
+                            "uid": "sol-ring-oracle",
+                            "name": "Sol Ring",
+                            "manaCost": "{1}",
+                            "cmc": 1,
+                            "text": "{T}: Add {C}{C}.",
+                            "colors": [],
+                            "colorIdentity": [],
+                            "superTypes": [],
+                            "types": ["Artifact"],
+                            "subTypes": [],
+                            "defaultCategory": "Ramp",
+                        },
+                        "edition": {
+                            "editioncode": "clb",
+                            "editionname": "Commander Legends: Battle for Baldur's Gate",
+                        },
+                    }
+                ],
+            },
+            "Arcane Signet": {
+                "count": 1,
+                "next": None,
+                "results": [
+                    {
+                        "id": 150825,
+                        "uid": "arcane-signet-printing",
+                        "displayName": "Arcane Signet",
+                        "rarity": "common",
+                        "releasedAt": "2024-01-01T00:00:00Z",
+                        "prices": {"tcg": 0.75},
+                        "owned": 4,
+                        "oracleCard": {
+                            "id": 15343,
+                            "uid": "arcane-signet-oracle",
+                            "name": "Arcane Signet",
+                            "manaCost": "{2}",
+                            "cmc": 2,
+                            "text": "{T}: Add one mana of any color in your commander's color identity.",
+                            "colors": [],
+                            "colorIdentity": [],
+                            "superTypes": [],
+                            "types": ["Artifact"],
+                            "subTypes": [],
+                            "defaultCategory": "Ramp",
+                        },
+                        "edition": {
+                            "editioncode": "cmm",
+                            "editionname": "Commander Masters",
+                        },
+                    }
+                ],
+            },
+        }
+        return FakeHttpResponse(payloads.get(exact_name, {"count": 0, "next": None, "results": []}))
 
 
 class FakeRedis:
@@ -474,6 +576,28 @@ class CollectionCacheRedisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second_snapshot.collection_id, 123)
         self.assertEqual(second_snapshot.records[0].name, "Sol Ring")
         self.assertTrue(redis_client.storage)
+
+
+class ArchidektCatalogSearchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_batches_multiple_exact_name_lookups_in_one_call(self) -> None:
+        http_client = FakeCardCatalogHttpClient()
+        client = ArchidektAuthenticatedClient(http_client, RuntimeSettings())
+        filters = ArchidektCardSearchFilters(exact_name=["Sol Ring", "Arcane Signet"])
+
+        results, total_matches, has_more = await client.search_cards(filters)
+
+        self.assertEqual(len(http_client.calls), 2)
+        self.assertEqual(
+            [call["params"]["name"] for call in http_client.calls],
+            ["Sol Ring", "Arcane Signet"],
+        )
+        self.assertEqual(total_matches, 2)
+        self.assertFalse(has_more)
+        self.assertEqual(
+            [result.requested_exact_name for result in results],
+            ["Sol Ring", "Arcane Signet"],
+        )
+        self.assertEqual([result.card_id for result in results], [150824, 150825])
 
     async def test_private_snapshot_reuses_redis_cache_across_services(self) -> None:
         snapshot = CollectionSnapshot(

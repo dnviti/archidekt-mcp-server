@@ -153,7 +153,9 @@ For fully automated deck/account management, the recommended sequence is:
 should be reused for `modify` and `remove` actions in `modify_personal_deck_cards`.
 
 `search_archidekt_cards` returns the numeric Archidekt `card_id` used by both deck card mutations and
-collection v2 upserts.
+collection v2 upserts. Its `exact_name` filter accepts either one exact card name or a list of exact
+card names, so the model can batch several catalog checks in one request. Batched exact-name results
+also include `requested_exact_name` to show which requested card name each returned printing came from.
 
 The current authenticated write surface is focused on the account's personal decks and collection v2
 entries. It does not yet expose every Archidekt endpoint such as folders, tags, or text-import flows.

@@ -18,7 +18,12 @@ class RuntimeSettings(BaseSettings):
     archidekt_base_url: str = "https://archidekt.com"
     scryfall_base_url: str = "https://api.scryfall.com"
     cache_ttl_seconds: int = Field(default=86400, ge=30, le=86400)
-    personal_deck_cache_ttl_seconds: int = Field(default=300, ge=0, le=3600)
+    personal_deck_cache_ttl_seconds: int = Field(default=900, ge=0, le=3600)
+    archidekt_rate_limit_max_requests: int = Field(default=30, ge=1, le=1000)
+    archidekt_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
+    archidekt_retry_max_attempts: int = Field(default=3, ge=1, le=10)
+    archidekt_retry_base_delay_seconds: float = Field(default=1.0, ge=0.0, le=60.0)
+    archidekt_exact_name_cache_ttl_seconds: int = Field(default=900, ge=0, le=86400)
     redis_url: str = "redis://127.0.0.1:6379/0"
     redis_key_prefix: str = "archidekt-commander"
     http_timeout_seconds: float = Field(default=30.0, ge=5.0, le=120.0)

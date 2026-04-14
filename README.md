@@ -12,6 +12,7 @@ The server is designed for LLM-driven workflows:
 - private deck access can use either an explicit `account` object or the active MCP auth session
 - collection snapshots are cached in Redis for 24 hours by default
 - authenticated collection snapshots, personal deck overlap data, and optional MCP OAuth state are also cached in Redis by default
+- personal deck cache TTL defaults to 900 seconds; Archidekt request budgets default to 30 requests per 60 seconds, 3 retries, 1 second retry backoff, and 900 seconds for exact-name lookups
 - OAuth access tokens, refresh tokens, and session records are stored in Redis without a TTL, so authenticated MCP logins remain valid until they are explicitly revoked or Redis data is cleared
 
 ## What It Exposes
@@ -221,7 +222,12 @@ $env:ARCHIDEKT_MCP_HOST = "127.0.0.1"
 $env:ARCHIDEKT_MCP_PORT = "8000"
 $env:ARCHIDEKT_MCP_REDIS_URL = "redis://127.0.0.1:6379/0"
 $env:ARCHIDEKT_MCP_CACHE_TTL_SECONDS = "86400"
-$env:ARCHIDEKT_MCP_PERSONAL_DECK_CACHE_TTL_SECONDS = "300"
+$env:ARCHIDEKT_MCP_PERSONAL_DECK_CACHE_TTL_SECONDS = "900"
+$env:ARCHIDEKT_MCP_ARCHIDEKT_RATE_LIMIT_MAX_REQUESTS = "30"
+$env:ARCHIDEKT_MCP_ARCHIDEKT_RATE_LIMIT_WINDOW_SECONDS = "60"
+$env:ARCHIDEKT_MCP_ARCHIDEKT_RETRY_MAX_ATTEMPTS = "3"
+$env:ARCHIDEKT_MCP_ARCHIDEKT_RETRY_BASE_DELAY_SECONDS = "1.0"
+$env:ARCHIDEKT_MCP_ARCHIDEKT_EXACT_NAME_CACHE_TTL_SECONDS = "900"
 $env:ARCHIDEKT_MCP_USER_AGENT = "archidekt-mcp-server/0.3 (+mailto:you@example.com)"
 # Optional MCP OAuth for ChatGPT / remote clients:
 # $env:ARCHIDEKT_MCP_AUTH_ENABLED = "true"

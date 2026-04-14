@@ -221,7 +221,7 @@ class DeckbuildingService:
         )
         self.redis_client = redis_async.from_url(settings.redis_url, decode_responses=True)
         self.archidekt_client = ArchidektPublicCollectionClient(self.http_client, settings)
-        self.auth_client = ArchidektAuthenticatedClient(self.http_client, settings)
+        self.auth_client = ArchidektAuthenticatedClient(self.http_client, settings, redis_client=self.redis_client)
         self.scryfall_client = ScryfallClient(self.http_client, settings)
         self.cache = CollectionCache(
             self.archidekt_client,

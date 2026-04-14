@@ -15,9 +15,10 @@ from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
 from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull
 from pydantic import ValidationError
+import httpx
 from starlette.testclient import TestClient
 
-from archidekt_commander_mcp.clients import ArchidektAuthenticatedClient, CollectionCache
+from archidekt_commander_mcp.clients import ArchidektAuthenticatedClient, ArchidektRequestGate, CollectionCache, ScryfallClient
 from archidekt_commander_mcp.config import RuntimeSettings
 from archidekt_commander_mcp.mcp_auth import (
     AUTH_SCOPE,
@@ -40,6 +41,7 @@ from archidekt_commander_mcp.models import (
     PersonalDeckCardModifications,
     PersonalDeckCardMutation,
     PersonalDeckCardUsage,
+    PersonalDeckCreateInput,
     PersonalDeckSummary,
 )
 from archidekt_commander_mcp.server import DeckbuildingService, PersonalDeckUsageSnapshot, create_server
@@ -297,6 +299,19 @@ class FakeAuthMutationClient:
         del deck_id
         self.modify_calls.append(cards)
         return {"successful_count": len(cards), "failed_count": 0}
+
+    async def create_deck(
+        self,
+        account: AuthenticatedAccount,
+        deck: PersonalDeckCreateInput,
+    ) -> tuple[dict[str, Any], PersonalDeckSummary | None]:
+        summary = PersonalDeckSummary(
+            id=99,
+            name=deck.name,
+            owner_username=account.username or "private-user",
+            owner_id=account.user_id or 1,
+        )
+        return {"id": 99, "name": deck.name}, summary
 
     async def list_personal_decks(
         self,
@@ -562,6 +577,39 @@ class FakeCardCatalogHttpClient:
                         "edition": {
                             "editioncode": "cmm",
                             "editionname": "Commander Masters",
+                        },
+                    }
+                ],
+            },
+            "Lightning Bolt": {
+                "count": 1,
+                "next": None,
+                "results": [
+                    {
+                        "id": 123,
+                        "uid": "lightning-bolt-printing",
+                        "displayName": "Lightning Bolt",
+                        "rarity": "common",
+                        "releasedAt": "2024-01-01T00:00:00Z",
+                        "prices": {"tcg": 2.50},
+                        "owned": 0,
+                        "oracleCard": {
+                            "id": 99999,
+                            "uid": "lightning-bolt-oracle",
+                            "name": "Lightning Bolt",
+                            "manaCost": "{R}",
+                            "cmc": 1,
+                            "text": "Lightning Bolt deals 3 damage to any target.",
+                            "colors": ["R"],
+                            "colorIdentity": ["R"],
+                            "superTypes": [],
+                            "types": ["Instant"],
+                            "subTypes": [],
+                            "defaultCategory": "Burn",
+                        },
+                        "edition": {
+                            "editioncode": "m10",
+                            "editionname": "Magic 2010",
                         },
                     }
                 ],
@@ -1858,6 +1906,282 @@ class OAuthHttpRouteTests(unittest.TestCase):
             )
             self.assertEqual(decks_response.status_code, 200)
             self.assertEqual(decks_response.json()["decks"][0]["name"], "OAuth Deck")
+
+
+class ArchidektRetryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retries_on_429_with_retry_after_header(self) -> None:
+        sleep_durations: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_durations.append(seconds)
+
+        responses = []
+        for _ in range(2):
+            response = httpx.Response(429, headers={"Retry-After": "2.5"})
+            response._request = httpx.Request("GET", "https://archidekt.com/api/cards/v2/")
+            responses.append(response)
+        success_response = httpx.Response(
+            200,
+            json={"count": 1, "next": None, "results": []},
+        )
+        success_response._request = httpx.Request("GET", "https://archidekt.com/api/cards/v2/")
+        responses.append(success_response)
+
+        call_count = 0
+
+        class FakeGate:
+            async def wait_for_slot(self) -> None:
+                pass
+
+        class FakeHttpClient:
+            async def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
+                nonlocal call_count
+                response = responses[call_count]
+                call_count += 1
+                return response
+
+        settings = RuntimeSettings(archidekt_retry_max_attempts=3, archidekt_retry_base_delay_seconds=1.0)
+        gate = ArchidektRequestGate.from_settings(settings)
+        gate._sleep = fake_sleep
+        client = ArchidektAuthenticatedClient(FakeHttpClient(), settings, request_gate=gate)
+
+        result = await client._request_archidekt("GET", "https://archidekt.com/api/cards/v2/")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(call_count, 3)
+        self.assertEqual(len(sleep_durations), 2)
+        self.assertAlmostEqual(sleep_durations[0], 2.5, places=1)
+
+    async def test_retries_with_exponential_backoff_without_retry_after(self) -> None:
+        sleep_durations: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_durations.append(seconds)
+
+        responses = []
+        for _ in range(2):
+            response = httpx.Response(429)
+            response._request = httpx.Request("GET", "https://archidekt.com/api/cards/v2/")
+            responses.append(response)
+        success_response = httpx.Response(
+            200,
+            json={"count": 1, "next": None, "results": []},
+        )
+        success_response._request = httpx.Request("GET", "https://archidekt.com/api/cards/v2/")
+        responses.append(success_response)
+
+        call_count = 0
+
+        class FakeGate:
+            async def wait_for_slot(self) -> None:
+                pass
+
+        class FakeHttpClient:
+            async def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
+                nonlocal call_count
+                response = responses[call_count]
+                call_count += 1
+                return response
+
+        settings = RuntimeSettings(archidekt_retry_max_attempts=3, archidekt_retry_base_delay_seconds=1.0)
+        gate = ArchidektRequestGate.from_settings(settings)
+        gate._sleep = fake_sleep
+        client = ArchidektAuthenticatedClient(FakeHttpClient(), settings, request_gate=gate)
+
+        result = await client._request_archidekt("GET", "https://archidekt.com/api/cards/v2/")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(call_count, 3)
+        self.assertEqual(len(sleep_durations), 2)
+        self.assertAlmostEqual(sleep_durations[0], 1.0, places=1)
+        self.assertAlmostEqual(sleep_durations[1], 2.0, places=1)
+
+    async def test_raises_final_429_after_max_attempts(self) -> None:
+        sleep_durations: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_durations.append(seconds)
+
+        call_count = 0
+
+        class FakeGate:
+            async def wait_for_slot(self) -> None:
+                pass
+
+        class FakeHttpClient:
+            async def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
+                nonlocal call_count
+                call_count += 1
+                response = httpx.Response(429)
+                response._request = httpx.Request("GET", "https://archidekt.com/api/cards/v2/")
+                return response
+
+        settings = RuntimeSettings(archidekt_retry_max_attempts=3, archidekt_retry_base_delay_seconds=1.0)
+        gate = ArchidektRequestGate.from_settings(settings)
+        gate._sleep = fake_sleep
+        client = ArchidektAuthenticatedClient(FakeHttpClient(), settings, request_gate=gate)
+
+        result = await client._request_archidekt("GET", "https://archidekt.com/api/cards/v2/")
+        self.assertEqual(result.status_code, 429)
+        self.assertEqual(call_count, 3)
+        self.assertEqual(len(sleep_durations), 2)
+
+    async def test_non_429_errors_are_not_retried(self) -> None:
+        call_count = 0
+
+        class FakeGate:
+            async def wait_for_slot(self) -> None:
+                pass
+
+        class FakeHttpClient:
+            async def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
+                nonlocal call_count
+                call_count += 1
+                response = httpx.Response(500)
+                response._request = httpx.Request("GET", "https://archidekt.com/api/cards/v2/")
+                return response
+
+        settings = RuntimeSettings(archidekt_retry_max_attempts=3, archidekt_retry_base_delay_seconds=1.0)
+        gate = ArchidektRequestGate.from_settings(settings)
+        gate._sleep = lambda s: None
+        client = ArchidektAuthenticatedClient(FakeHttpClient(), settings, request_gate=gate)
+
+        result = await client._request_archidekt("GET", "https://archidekt.com/api/cards/v2/")
+        self.assertEqual(result.status_code, 500)
+        self.assertEqual(call_count, 1)
+
+
+class AuthenticatedDeckListCachingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_second_login_uses_cached_deck_list(self) -> None:
+        service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
+        original_redis = service.redis_client
+        service.auth_client = FakeAuthLoginClient()
+        await original_redis.aclose()
+        try:
+            response1 = await service.login_archidekt(ArchidektAccount(username="tester", password="hunter2"))
+            self.assertEqual(response1.account.username, "tester")
+
+            response2 = await service.login_archidekt(ArchidektAccount(username="tester", password="hunter2"))
+            self.assertEqual(response2.account.username, "tester")
+            self.assertEqual(response2.personal_decks.total_decks, 2)
+        finally:
+            await service.aclose()
+
+    async def test_deck_write_invalidates_deck_list_cache(self) -> None:
+        snapshot = CollectionSnapshot(
+            collection_id=123,
+            owner_id=456,
+            owner_username="tester",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=0,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/123",
+            records=[],
+        )
+        service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
+        original_redis = service.redis_client
+        fake_redis = FakeRedis()
+        collection_client = FakeCollectionClient(snapshot)
+        service.redis_client = fake_redis
+        service.cache.redis = fake_redis
+        service.archidekt_client = collection_client
+        service.cache.client = collection_client
+        service.auth_client = FakeAuthMutationClient()
+        await original_redis.aclose()
+        account = AuthenticatedAccount(token="secret", username="tester", user_id=1)
+        try:
+            await service.create_personal_deck(
+                deck=PersonalDeckCreateInput(name="New Deck", deck_format=1),
+                account=account,
+            )
+
+            list_response = await service.list_personal_decks(account)
+            self.assertEqual(list_response.owner_username, "tester")
+            self.assertIsNotNone(list_response)
+        finally:
+            await service.aclose()
+
+
+class ExactNameCacheTests(unittest.IsolatedAsyncioTestCase):
+    async def test_exact_name_search_warms_cache_for_backfill(self) -> None:
+        settings = RuntimeSettings(personal_deck_cache_ttl_seconds=0, archidekt_exact_name_cache_ttl_seconds=900)
+        http_client = FakeCardCatalogHttpClient()
+        client = ArchidektAuthenticatedClient(http_client, settings, redis_client=None)
+        filters = ArchidektCardSearchFilters(exact_name=["Lightning Bolt"], game=1)
+
+        result1, total1, has_more1 = await client.search_cards(filters)
+        self.assertEqual(len(result1), 1)
+        self.assertEqual(result1[0].name, "Lightning Bolt")
+        first_call_count = len(http_client.calls)
+
+        result2, total2, has_more2 = await client.search_cards(filters)
+        self.assertEqual(len(result2), 1)
+        self.assertEqual(result2[0].name, "Lightning Bolt")
+
+        self.assertEqual(len(http_client.calls), first_call_count,
+                         "Second exact name search should hit cache and not make additional HTTP requests")
+
+    async def test_query_search_is_not_cached(self) -> None:
+        settings = RuntimeSettings(personal_deck_cache_ttl_seconds=0, archidekt_exact_name_cache_ttl_seconds=900)
+        http_client = FakeCardCatalogHttpClient()
+        client = ArchidektAuthenticatedClient(http_client, settings, redis_client=None)
+
+        filters = ArchidektCardSearchFilters(query="Lightning", game=1)
+        await client.search_cards(filters)
+        await client.search_cards(filters)
+
+        self.assertGreaterEqual(len(http_client.calls), 2,
+                                "Query-based search should not be cached and should make fresh requests")
+
+
+class ArchidektRequestBudgetTests(unittest.IsolatedAsyncioTestCase):
+    async def test_archidekt_gate_delays_requests_beyond_budget(self) -> None:
+        current_time = 0.0
+        sleep_calls: list[float] = []
+
+        def fake_time() -> float:
+            return current_time
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            nonlocal current_time
+            current_time += seconds
+
+        gate = ArchidektRequestGate(
+            max_requests=2,
+            window_seconds=1.0,
+            time_source=fake_time,
+            sleep=fake_sleep,
+        )
+
+        await gate.wait_for_slot()
+        await gate.wait_for_slot()
+
+        self.assertEqual(len(sleep_calls), 0)
+
+        current_time = 0.5
+
+        await gate.wait_for_slot()
+        self.assertGreater(len(sleep_calls), 0,
+                           "Third request in the same window should have been delayed")
+
+    async def test_scryfall_requests_bypass_gate(self) -> None:
+        gate_calls = 0
+
+        class CountingGate:
+            async def wait_for_slot(self) -> None:
+                nonlocal gate_calls
+                gate_calls += 1
+
+        settings = RuntimeSettings()
+        http_client = httpx.AsyncClient(timeout=httpx.Timeout(5))
+        gate = CountingGate()
+
+        scryfall = ScryfallClient(http_client, settings)
+        self.assertEqual(gate_calls, 0,
+                          "ScryfallClient should not use the Archidekt request gate")
+
+        await http_client.aclose()
 
 
 if __name__ == "__main__":

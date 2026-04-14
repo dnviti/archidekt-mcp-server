@@ -82,6 +82,20 @@ def build_archidekt_exact_name_filters(
     )
 
 
+def _serialize_archidekt_card_reference(ref: ArchidektCardReference) -> dict[str, Any]:
+    payload = ref.model_dump(mode="json")
+    if ref.released_at is not None:
+        payload["released_at"] = ref.released_at.isoformat()
+    return payload
+
+
+def _deserialize_archidekt_card_reference(payload: dict[str, Any]) -> ArchidektCardReference:
+    raw_released_at = payload.get("released_at")
+    if isinstance(raw_released_at, str):
+        payload["released_at"] = _parse_datetime(raw_released_at)
+    return ArchidektCardReference.model_validate(payload)
+
+
 class ArchidektRequestGate:
     def __init__(
         self,
@@ -161,17 +175,17 @@ class _ArchidektHttpClientBase:
         while True:
             await self.request_gate.wait_for_slot()
             response = await self.http_client.request(method, url, **kwargs)
-            if response.status_code != 429 or attempt >= max_attempts:
+            if response.status_code != 429 or attempt + 1 >= max_attempts:
                 return response
 
             retry_delay_seconds = self._archidekt_retry_delay_seconds(response, attempt)
             LOGGER.warning(
-                "Archidekt returned 429 for %s %s; retrying in %.3f seconds (attempt %s/%s)",
+                "Archidekt returned 429 for %s %s; retrying in %.3f seconds (attempt %d/%d)",
                 method,
                 url,
                 retry_delay_seconds,
                 attempt + 1,
-                max_attempts,
+                max_attempts - 1,
             )
             await self._retry_sleep(retry_delay_seconds)
             attempt += 1
@@ -721,6 +735,10 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
             cached = self._load_exact_name_cache(cache_key)
             if cached is not None:
                 return cached
+            redis_cached = await self._load_exact_name_cache_from_redis(cache_key)
+            if redis_cached is not None:
+                self._store_exact_name_cache(cache_key, redis_cached)
+                return redis_cached
         params = self._card_search_params(filters, requested_exact_name=requested_exact_name)
         response = await self._request_archidekt(
             "GET",
@@ -744,6 +762,7 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         result = (mapped, total_matches, has_more)
         if cache_key is not None:
             self._store_exact_name_cache(cache_key, result)
+            await self._store_exact_name_cache_in_redis(cache_key, result)
         return result
 
     def _exact_name_cache_key(
@@ -776,6 +795,77 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
     ) -> None:
         ttl = timedelta(seconds=self.settings.archidekt_exact_name_cache_ttl_seconds)
         self._exact_name_search_cache[cache_key] = (datetime.now(UTC) + ttl, value)
+
+    def _exact_name_redis_key(self, cache_key: str) -> str:
+        prefix = self.settings.redis_key_prefix.strip(":") or "archidekt-commander"
+        return f"{prefix}:catalog:exact-name:{cache_key}"
+
+    async def _load_exact_name_cache_from_redis(
+        self, cache_key: str
+    ) -> tuple[list[ArchidektCardReference], int | None, bool | None] | None:
+        if self.redis is None:
+            return None
+        redis_key = self._exact_name_redis_key(cache_key)
+        try:
+            data = await self.redis.get(redis_key)
+        except RedisError as error:
+            LOGGER.warning(
+                "Redis exact-name cache read failed for %s; proceeding without cache: %s",
+                cache_key,
+                error,
+            )
+            return None
+        if not data:
+            return None
+        try:
+            payload = json.loads(data)
+            results = [
+                _deserialize_archidekt_card_reference(item)
+                for item in payload.get("results") or []
+            ]
+            total_matches = _safe_int(payload.get("total_matches"))
+            has_more = payload.get("has_more")
+            if has_more is not None:
+                has_more = bool(has_more)
+            return results, total_matches, has_more
+        except Exception as error:
+            LOGGER.warning(
+                "Failed to decode Redis exact-name cache for %s: %s",
+                cache_key,
+                error,
+            )
+            try:
+                await self.redis.delete(redis_key)
+            except RedisError:
+                pass
+            return None
+
+    async def _store_exact_name_cache_in_redis(
+        self,
+        cache_key: str,
+        value: tuple[list[ArchidektCardReference], int | None, bool | None],
+    ) -> None:
+        if self.redis is None:
+            return
+        redis_key = self._exact_name_redis_key(cache_key)
+        results, total_matches, has_more = value
+        payload = {
+            "results": [_serialize_archidekt_card_reference(ref) for ref in results],
+            "total_matches": total_matches,
+            "has_more": has_more,
+        }
+        try:
+            await self.redis.set(
+                redis_key,
+                json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+                ex=self.settings.archidekt_exact_name_cache_ttl_seconds,
+            )
+        except RedisError as error:
+            LOGGER.warning(
+                "Redis exact-name cache write failed for %s; continuing without persisted cache: %s",
+                cache_key,
+                error,
+            )
 
     async def fetch_deck_cards(
         self,

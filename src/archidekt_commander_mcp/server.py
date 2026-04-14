@@ -205,6 +205,13 @@ class PersonalDeckUsageSnapshot:
     fetched_at: datetime
 
 
+@dataclass(slots=True)
+class AuthenticatedDeckListSnapshot:
+    account: AuthenticatedAccount
+    decks: list[PersonalDeckSummary]
+    fetched_at: datetime
+
+
 class DeckbuildingService:
     def __init__(self, settings: RuntimeSettings) -> None:
         self.settings = settings
@@ -224,6 +231,7 @@ class DeckbuildingService:
         )
         self._locks: dict[str, asyncio.Lock] = {}
         self._private_snapshot_cache: dict[str, tuple[datetime, Any]] = {}
+        self._authenticated_deck_list_cache: dict[str, tuple[datetime, AuthenticatedDeckListSnapshot]] = {}
         self._personal_deck_usage_cache: dict[str, tuple[datetime, PersonalDeckUsageSnapshot]] = {}
         self._recent_collection_write_markers: dict[str, datetime] = {}
 
@@ -247,6 +255,98 @@ class DeckbuildingService:
 
     def _private_usage_cache_key(self, account: AuthenticatedAccount) -> str:
         return f"private-decks:{self._private_account_cache_key(account)}"
+
+    def _private_authenticated_deck_list_cache_key(self, account: AuthenticatedAccount) -> str:
+        return f"authenticated-deck-list:{self._private_account_cache_key(account)}"
+
+    def _deduplicate_personal_decks(
+        self,
+        decks: list[PersonalDeckSummary],
+    ) -> list[PersonalDeckSummary]:
+        deduplicated: list[PersonalDeckSummary] = []
+        seen_ids: set[int] = set()
+        for deck in decks:
+            if deck.id in seen_ids:
+                continue
+            seen_ids.add(deck.id)
+            deduplicated.append(deck)
+        return deduplicated
+
+    async def _get_authenticated_deck_list(
+        self,
+        account: AuthenticatedAccount,
+        force_refresh: bool = False,
+    ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
+        cache_key = self._private_authenticated_deck_list_cache_key(account)
+        async with self._lock_for_key(cache_key):
+            if not force_refresh:
+                cached = self._load_private_memory_cache(
+                    self._authenticated_deck_list_cache, cache_key
+                )
+                if cached is not None:
+                    return cached.account, cached.decks
+                cached_redis = await self._load_authenticated_deck_list_from_redis(cache_key)
+                if cached_redis is not None:
+                    self._authenticated_deck_list_cache[cache_key] = (
+                        datetime.now(UTC) + timedelta(seconds=self.settings.personal_deck_cache_ttl_seconds),
+                        cached_redis,
+                    )
+                    return cached_redis.account, cached_redis.decks
+
+            resolved_account, decks = await self.auth_client.list_personal_decks(account)
+            snapshot = AuthenticatedDeckListSnapshot(
+                account=resolved_account,
+                decks=self._deduplicate_personal_decks(decks),
+                fetched_at=datetime.now(UTC),
+            )
+            ttl = timedelta(seconds=self.settings.personal_deck_cache_ttl_seconds)
+            self._authenticated_deck_list_cache[cache_key] = (datetime.now(UTC) + ttl, snapshot)
+            await self._store_authenticated_deck_list_in_redis(cache_key, snapshot)
+            return snapshot.account, snapshot.decks
+
+    async def _load_authenticated_deck_list_from_redis(
+        self, cache_key: str
+    ) -> AuthenticatedDeckListSnapshot | None:
+        try:
+            redis_key = self._private_redis_key("authenticated-deck-list", cache_key)
+            data = await self.redis_client.get(redis_key)
+            if not data:
+                return None
+            obj = json.loads(data)
+            return AuthenticatedDeckListSnapshot(
+                account=AuthenticatedAccount.model_validate(obj["account"]),
+                decks=[PersonalDeckSummary.model_validate(d) for d in obj["decks"]],
+                fetched_at=datetime.fromisoformat(obj["fetched_at"]),
+            )
+        except Exception:
+            return None
+
+    async def _store_authenticated_deck_list_in_redis(
+        self, cache_key: str, snapshot: AuthenticatedDeckListSnapshot
+    ) -> None:
+        try:
+            redis_key = self._private_redis_key("authenticated-deck-list", cache_key)
+            data = json.dumps({
+                "account": snapshot.account.model_dump(mode="json"),
+                "decks": [d.model_dump(mode="json") for d in snapshot.decks],
+                "fetched_at": snapshot.fetched_at.isoformat(),
+            })
+            await self.redis_client.set(
+                redis_key, data, ex=self.settings.personal_deck_cache_ttl_seconds
+            )
+        except Exception:
+            pass
+
+    async def _invalidate_authenticated_deck_list_cache(
+        self, account: AuthenticatedAccount
+    ) -> None:
+        cache_key = self._private_authenticated_deck_list_cache_key(account)
+        self._authenticated_deck_list_cache.pop(cache_key, None)
+        try:
+            redis_key = self._private_redis_key("authenticated-deck-list", cache_key)
+            await self.redis_client.delete(redis_key)
+        except Exception:
+            pass
 
     def _collection_write_marker_key(self, account: AuthenticatedAccount, game: int) -> str:
         return f"{self._private_account_cache_key(account)}:game:{game}"
@@ -470,6 +570,10 @@ class DeckbuildingService:
         self._personal_deck_usage_cache.pop(cache_key, None)
         await self._delete_private_redis_key(self._private_redis_key("personal-decks", cache_key))
 
+    async def _invalidate_personal_deck_caches(self, account: AuthenticatedAccount) -> None:
+        await self._invalidate_authenticated_deck_list_cache(account)
+        await self._invalidate_personal_deck_usage_cache(account)
+
     async def _invalidate_collection_caches(
         self,
         account: AuthenticatedAccount,
@@ -665,7 +769,7 @@ class DeckbuildingService:
         deck_id = (summary.id if summary else None) or _extract_deck_id(payload)
         if deck_id is None:
             raise RuntimeError("Archidekt deck create succeeded but did not return a deck id.")
-        await self._invalidate_personal_deck_usage_cache(resolved_account)
+        await self._invalidate_personal_deck_caches(resolved_account)
         return PersonalDeckMutationResponse(
             action="created",
             deck_id=deck_id,
@@ -688,7 +792,7 @@ class DeckbuildingService:
     ) -> PersonalDeckMutationResponse:
         resolved_account = await self._coerce_account(account)
         payload, summary = await self.auth_client.update_deck(resolved_account, deck_id, deck)
-        await self._invalidate_personal_deck_usage_cache(resolved_account)
+        await self._invalidate_personal_deck_caches(resolved_account)
         return PersonalDeckMutationResponse(
             action="updated",
             deck_id=deck_id,
@@ -707,7 +811,7 @@ class DeckbuildingService:
     ) -> PersonalDeckMutationResponse:
         resolved_account = await self._coerce_account(account)
         await self.auth_client.delete_deck(resolved_account, deck_id)
-        await self._invalidate_personal_deck_usage_cache(resolved_account)
+        await self._invalidate_personal_deck_caches(resolved_account)
         return PersonalDeckMutationResponse(
             action="deleted",
             deck_id=deck_id,
@@ -731,7 +835,7 @@ class DeckbuildingService:
             account=resolved_account,
         )
         payload = await self.auth_client.modify_deck_cards(resolved_account, deck_id, cards)
-        await self._invalidate_personal_deck_usage_cache(resolved_account)
+        await self._invalidate_personal_deck_caches(resolved_account)
         successful_count = _safe_int(payload.get("successful_count")) if isinstance(payload, dict) else None
         failed_count = _safe_int(payload.get("failed_count")) if isinstance(payload, dict) else None
         affected_count = successful_count if successful_count is not None else len(cards)

@@ -406,6 +406,20 @@ class FakeDeckMutationHttpClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
+    async def request(
+        self,
+        method: str,
+        url: str,
+        content: str | None = None,
+        json: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+        params: dict[str, object] | None = None,
+        **kwargs: object,
+    ) -> FakeStatusHttpResponse:
+        if method == "PATCH":
+            return await self.patch(url, json=json, headers=headers)
+        return FakeStatusHttpResponse(200, {})
+
     async def patch(
         self,
         url: str,
@@ -455,6 +469,20 @@ class FakeCollectionDeleteHttpClient:
 class FakeCardCatalogHttpClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        content: str | None = None,
+        json: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+        params: dict[str, object] | None = None,
+        **kwargs: object,
+    ) -> FakeHttpResponse:
+        if method == "GET":
+            return await self.get(url, params=params, headers=headers)
+        return FakeHttpResponse({"count": 0, "next": None, "results": []})
 
     async def get(
         self,

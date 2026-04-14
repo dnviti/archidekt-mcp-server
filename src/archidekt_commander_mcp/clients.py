@@ -716,6 +716,11 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         filters: ArchidektCardSearchFilters,
         requested_exact_name: str | None = None,
     ) -> tuple[list[ArchidektCardReference], int | None, bool | None]:
+        cache_key = self._exact_name_cache_key(filters, requested_exact_name)
+        if cache_key is not None:
+            cached = self._load_exact_name_cache(cache_key)
+            if cached is not None:
+                return cached
         params = self._card_search_params(filters, requested_exact_name=requested_exact_name)
         response = await self._request_archidekt(
             "GET",
@@ -736,7 +741,41 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         ]
         total_matches = _safe_int(payload.get("count"))
         has_more = bool(payload.get("next")) if payload.get("next") is not None else None
-        return mapped, total_matches, has_more
+        result = (mapped, total_matches, has_more)
+        if cache_key is not None:
+            self._store_exact_name_cache(cache_key, result)
+        return result
+
+    def _exact_name_cache_key(
+        self,
+        filters: ArchidektCardSearchFilters,
+        requested_exact_name: str | None,
+    ) -> str | None:
+        if self.settings.archidekt_exact_name_cache_ttl_seconds <= 0:
+            return None
+        if not requested_exact_name or filters.query:
+            return None
+        return f"{requested_exact_name.casefold()}:{filters.game}:{filters.page}:{filters.edition_code or ''}:{filters.include_tokens}:{filters.include_digital}:{filters.all_editions}"
+
+    def _load_exact_name_cache(
+        self, cache_key: str
+    ) -> tuple[list[ArchidektCardReference], int | None, bool | None] | None:
+        entry = self._exact_name_search_cache.get(cache_key)
+        if entry is None:
+            return None
+        expires_at, value = entry
+        if expires_at <= datetime.now(UTC):
+            self._exact_name_search_cache.pop(cache_key, None)
+            return None
+        return value
+
+    def _store_exact_name_cache(
+        self,
+        cache_key: str,
+        value: tuple[list[ArchidektCardReference], int | None, bool | None],
+    ) -> None:
+        ttl = timedelta(seconds=self.settings.archidekt_exact_name_cache_ttl_seconds)
+        self._exact_name_search_cache[cache_key] = (datetime.now(UTC) + ttl, value)
 
     async def fetch_deck_cards(
         self,

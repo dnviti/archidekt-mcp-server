@@ -147,6 +147,20 @@ class RuntimeSettingsEnvTests(unittest.TestCase):
         self.assertEqual(settings.cache_ttl_seconds, 1234)
         self.assertEqual(settings.personal_deck_cache_ttl_seconds, 222)
 
+    def test_accepts_non_expiring_auth_ttls_from_environment(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "ARCHIDEKT_MCP_AUTH_ACCESS_TOKEN_TTL_SECONDS": "infinite",
+                "ARCHIDEKT_MCP_AUTH_REFRESH_TOKEN_TTL_SECONDS": "0",
+            },
+            clear=False,
+        ):
+            settings = RuntimeSettings()
+
+        self.assertIsNone(settings.auth_access_token_ttl_seconds)
+        self.assertIsNone(settings.auth_refresh_token_ttl_seconds)
+
 
 class WebUiTests(unittest.TestCase):
     def test_oauth_enabled_page_removes_manual_account_json_and_shows_oauth_controls(self) -> None:
@@ -164,6 +178,8 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("non-basic cards should normally stay at 4 copies or fewer", html)
         self.assertIn("sort_by: unit_price", html)
         self.assertIn("sort_direction: desc", html)
+        self.assertIn("window.localStorage", html)
+        self.assertNotIn("payload.expires_in || 3600", html)
 
     def test_server_instructions_explain_quantity_rules(self) -> None:
         self.assertIn("Collection quantities may be any positive integer.", SERVER_INSTRUCTIONS)
@@ -882,6 +898,60 @@ class OAuthProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.client_id, "client-1")
         self.assertEqual(session.access_token, token.access_token)
         self.assertEqual(session.refresh_token, token.refresh_token)
+
+    async def test_non_expiring_tokens_persist_without_redis_ttl(self) -> None:
+        redis_client = FakeRedis()
+        provider = RedisArchidektOAuthProvider(
+            redis_client,
+            key_prefix="archidekt-commander",
+            issuer_url="http://127.0.0.1:8000",
+            auth_code_ttl_seconds=600,
+            access_token_ttl_seconds=None,
+            refresh_token_ttl_seconds=None,
+        )
+        client = OAuthClientInformationFull(
+            client_id="client-1",
+            client_secret="secret",
+            redirect_uris=["https://chat.openai.com/a/oauth/callback"],
+            token_endpoint_auth_method="client_secret_post",
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+            scope=AUTH_SCOPE,
+        )
+        await provider.register_client(client)
+
+        redirect_to_form = await provider.authorize(
+            client,
+            AuthorizationParams(
+                state="state-123",
+                scopes=[AUTH_SCOPE],
+                code_challenge="pkce-challenge",
+                redirect_uri="https://chat.openai.com/a/oauth/callback",
+                redirect_uri_provided_explicitly=True,
+                resource="http://127.0.0.1:8000/mcp",
+            ),
+        )
+        request_id = parse_qs(urlparse(redirect_to_form).query)["request_id"][0]
+        redirect_back = await provider.complete_authorization(
+            request_id,
+            AuthenticatedAccount(token="arch-token", username="tester", user_id=123),
+        )
+        code = parse_qs(urlparse(redirect_back).query)["code"][0]
+        loaded_code = await provider.load_authorization_code(client, code)
+        assert loaded_code is not None
+
+        token = await provider.exchange_authorization_code(client, loaded_code)
+        access = await provider.load_access_token(token.access_token)
+        refresh = await provider.load_refresh_token(client, token.refresh_token or "")
+        assert access is not None
+        assert refresh is not None
+
+        self.assertIsNone(token.expires_in)
+        self.assertIsNone(access.expires_at)
+        self.assertIsNone(refresh.expires_at)
+        self.assertEqual(await redis_client.ttl(provider._key("access-token", token.access_token)), -1)
+        self.assertEqual(await redis_client.ttl(provider._key("refresh-token", token.refresh_token or "")), -1)
+        self.assertEqual(await redis_client.ttl(provider._key("session", access.session_id)), -1)
 
 
 def _pkce_challenge(verifier: str) -> str:

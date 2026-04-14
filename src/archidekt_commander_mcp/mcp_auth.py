@@ -572,7 +572,7 @@ def render_archidekt_authorize_page(
       </label>
       <button type="submit">Continue</button>
     </form>
-    <p class="note">The password is used only to perform the Archidekt login during this authorization step. The MCP server stores the resulting Archidekt token and OAuth session in Redis, not the raw password.</p>
+    <p class="note">The password is used only to perform the Archidekt login during this authorization step. The MCP server stores the resulting Archidekt token and OAuth session in Redis, not the raw password, and keeps the session until you revoke it or clear Redis.</p>
   </main>
 </body>
 </html>"""

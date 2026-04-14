@@ -484,6 +484,14 @@ def render_home_page(settings: RuntimeSettings) -> str:
       return trimmed.length ? trimmed : null;
     }}
 
+    function oauthExpiryTimestamp(expiresIn) {{
+      const numeric = Number(expiresIn);
+      if (!Number.isFinite(numeric) || numeric <= 0) {{
+        return null;
+      }}
+      return Date.now() + (numeric * 1000);
+    }}
+
     function encodeFormBody(values) {{
       return new URLSearchParams(values).toString();
     }}
@@ -655,6 +663,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
         access_token: payload.access_token,
         refresh_token: payload.refresh_token || session.refresh_token,
         expires_at: expiresAtFromSeconds(payload.expires_in),
+        expires_at: expiresAtFromSeconds(payload.expires_in),
         scope: payload.scope || session.scope
       }};
       writeStoredSession(refreshed);
@@ -778,6 +787,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
           client_id: registeredClient.client_id,
           access_token: tokenPayload.access_token,
           refresh_token: tokenPayload.refresh_token || null,
+          expires_at: expiresAtFromSeconds(tokenPayload.expires_in),
           expires_at: expiresAtFromSeconds(tokenPayload.expires_in),
           scope: tokenPayload.scope || oauthScope
         }});

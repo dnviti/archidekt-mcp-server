@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, computed_field, field_validator
+from pydantic import Field, ValidationInfo, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,6 +34,8 @@ class RuntimeSettings(BaseSettings):
     auth_enabled: bool = False
     public_base_url: str | None = None
     auth_code_ttl_seconds: int = Field(default=600, ge=60, le=3600)
+    auth_access_token_ttl_seconds: int | None = Field(default=None)
+    auth_refresh_token_ttl_seconds: int | None = Field(default=None)
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -63,6 +65,37 @@ class RuntimeSettings(BaseSettings):
         if value is None:
             return "archidekt-commander"
         return str(value).strip() or "archidekt-commander"
+
+    @field_validator("auth_access_token_ttl_seconds", "auth_refresh_token_ttl_seconds", mode="before")
+    @classmethod
+    def normalize_optional_auth_ttl(cls, value: object) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise ValueError("Boolean values are not valid TTL settings.")
+        if isinstance(value, int):
+            numeric = value
+        else:
+            compact = str(value).strip().lower()
+            if compact in {"", "0", "none", "null", "never", "infinite", "infinity", "disabled", "off"}:
+                return None
+            numeric = int(compact)
+        if numeric <= 0:
+            return None
+        return numeric
+
+    @field_validator("auth_access_token_ttl_seconds", "auth_refresh_token_ttl_seconds")
+    @classmethod
+    def validate_optional_auth_ttl(cls, value: int | None, info: ValidationInfo) -> int | None:
+        if value is None:
+            return None
+        if info.field_name == "auth_access_token_ttl_seconds":
+            if value < 300 or value > 2592000:
+                raise ValueError("Access token TTL must be between 300 and 2592000 seconds, or disabled.")
+            return value
+        if value < 3600 or value > 31536000:
+            raise ValueError("Refresh token TTL must be between 3600 and 31536000 seconds, or disabled.")
+        return value
 
     @computed_field
     @property

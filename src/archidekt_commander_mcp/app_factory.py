@@ -74,6 +74,8 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
             key_prefix=runtime.redis_key_prefix,
             issuer_url=runtime.normalized_public_base_url,
             auth_code_ttl_seconds=runtime.auth_code_ttl_seconds,
+            access_token_ttl_seconds=runtime.auth_access_token_ttl_seconds,
+            refresh_token_ttl_seconds=runtime.auth_refresh_token_ttl_seconds,
         )
         auth_settings = AuthSettings(
             issuer_url=runtime.normalized_public_base_url,
@@ -160,6 +162,10 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
                 "mcp_auth_enabled": runtime.auth_enabled,
                 "oauth_session_backend": "redis" if runtime.auth_enabled else "disabled",
                 "oauth_session_expiration": "never" if runtime.auth_enabled else "disabled",
+                "oauth_access_token_ttl_seconds": runtime.auth_access_token_ttl_seconds,
+                "oauth_refresh_token_ttl_seconds": runtime.auth_refresh_token_ttl_seconds,
+                "oauth_access_token_persistent": runtime.auth_access_token_ttl_seconds is None,
+                "oauth_refresh_token_persistent": runtime.auth_refresh_token_ttl_seconds is None,
             }
         )
 

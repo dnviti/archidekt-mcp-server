@@ -243,6 +243,7 @@ Then open:
 Run the test suite:
 
 ```powershell
+.venv\Scripts\python.exe -m ruff check src/archidekt_commander_mcp
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 

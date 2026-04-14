@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime, timedelta
 import hashlib
 import os
+from typing import Any
 import unittest
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
@@ -44,7 +45,13 @@ from archidekt_commander_mcp.models import (
     PersonalDeckCreateInput,
     PersonalDeckSummary,
 )
-from archidekt_commander_mcp.server import DeckbuildingService, PersonalDeckUsageSnapshot, create_server
+from archidekt_commander_mcp.server import (
+    DeckbuildingService,
+    PersonalDeckUsageSnapshot,
+    build_arg_parser,
+    build_runtime_settings_from_args,
+    create_server,
+)
 from archidekt_commander_mcp.server_contracts import SERVER_INSTRUCTIONS
 from archidekt_commander_mcp.webui import render_home_page
 
@@ -80,12 +87,83 @@ class ArchidektAccountTests(unittest.TestCase):
 
 
 class HttpRouteTests(unittest.TestCase):
+    def test_route_inventory_matches_frozen_contract(self) -> None:
+        server = create_server(RuntimeSettings())
+        app = server.streamable_http_app()
+        route_paths = {getattr(route, "path", "") for route in app.routes}
+
+        self.assertEqual(
+            route_paths,
+            {
+                "/",
+                "/health",
+                "/api/login",
+                "/api/personal-decks",
+                "/api/cards/search",
+                "/api/personal-deck-cards",
+                "/api/personal-decks/create",
+                "/api/personal-decks/update",
+                "/api/personal-decks/delete",
+                "/api/personal-decks/modify-cards",
+                "/api/collection/upsert",
+                "/api/collection/delete",
+                "/api/overview",
+                "/api/search-owned",
+                "/api/search-unowned",
+                "/mcp",
+            },
+        )
+
+    def test_auth_enabled_route_inventory_includes_oauth_routes(self) -> None:
+        with patch("archidekt_commander_mcp.app_factory.redis_async.from_url", return_value=FakeRedis()):
+            server = create_server(
+                RuntimeSettings(
+                    auth_enabled=True,
+                    public_base_url="https://testserver",
+                    redis_url="redis://fake/0",
+                )
+            )
+        app = server.streamable_http_app()
+        route_paths = {getattr(route, "path", "") for route in app.routes}
+
+        self.assertIn("/auth/archidekt-login", route_paths)
+        self.assertIn("/register", route_paths)
+        self.assertIn("/authorize", route_paths)
+        self.assertIn("/token", route_paths)
+        self.assertIn("/revoke", route_paths)
+        self.assertIn("/.well-known/oauth-authorization-server", route_paths)
+
+    def test_streamable_http_path_override_changes_mcp_route(self) -> None:
+        server = create_server(RuntimeSettings(streamable_http_path="/custom-mcp"))
+        app = server.streamable_http_app()
+        route_paths = {getattr(route, "path", "") for route in app.routes}
+
+        self.assertIn("/custom-mcp", route_paths)
+        self.assertNotIn("/mcp", route_paths)
+
     def test_health_route(self) -> None:
         server = create_server(RuntimeSettings())
         client = TestClient(server.streamable_http_app())
         response = client.get("/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
+
+    def test_post_only_api_routes_reject_get_with_405(self) -> None:
+        server = create_server(RuntimeSettings())
+        client = TestClient(server.streamable_http_app())
+        response = client.get("/api/login")
+        self.assertEqual(response.status_code, 405)
+
+    def test_login_api_rejects_invalid_json_with_400(self) -> None:
+        server = create_server(RuntimeSettings())
+        client = TestClient(server.streamable_http_app())
+        response = client.post(
+            "/api/login",
+            content="{invalid-json",
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Invalid JSON body.")
 
     def test_login_api_rejects_missing_account(self) -> None:
         server = create_server(RuntimeSettings())
@@ -126,6 +204,175 @@ class HttpRouteTests(unittest.TestCase):
         self.assertTrue(tools_by_name["delete_personal_deck"].annotations.destructiveHint)
         self.assertTrue(tools_by_name["delete_collection_entries"].annotations.destructiveHint)
         self.assertFalse(tools_by_name["refresh_collection_cache"].annotations.readOnlyHint)
+
+    def test_tool_roster_exactly_matches_contract(self) -> None:
+        server = create_server(RuntimeSettings())
+        tools = asyncio.run(server.list_tools())
+        tool_names = [tool.name for tool in tools]
+
+        self.assertEqual(
+            tool_names,
+            [
+                "login_archidekt",
+                "list_personal_decks",
+                "search_archidekt_cards",
+                "get_personal_deck_cards",
+                "create_personal_deck",
+                "update_personal_deck",
+                "delete_personal_deck",
+                "modify_personal_deck_cards",
+                "upsert_collection_entries",
+                "delete_collection_entries",
+                "get_collection_overview",
+                "refresh_collection_cache",
+                "search_owned_cards",
+                "search_unowned_cards",
+            ],
+        )
+
+
+class ApiErrorMappingTests(unittest.TestCase):
+    def test_http_status_error_maps_to_502(self) -> None:
+        async def fake_get_collection_overview(
+            self,
+            collection: CollectionLocator,
+            account: ArchidektAccount | AuthenticatedAccount | None = None,
+        ) -> object:
+            del self
+            del collection
+            del account
+            request = httpx.Request("GET", "https://archidekt.com/api/collection/v2/")
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("upstream unavailable", request=request, response=response)
+
+        with patch(
+            "archidekt_commander_mcp.server.DeckbuildingService.get_collection_overview",
+            new=fake_get_collection_overview,
+        ):
+            server = create_server(RuntimeSettings())
+            client = TestClient(server.streamable_http_app(), raise_server_exceptions=False)
+            response = client.post("/api/overview", json={"collection": {"username": "tester"}})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"], "Remote HTTP error from Archidekt or Scryfall.")
+
+    def test_value_error_maps_to_400(self) -> None:
+        async def fake_get_collection_overview(
+            self,
+            collection: CollectionLocator,
+            account: ArchidektAccount | AuthenticatedAccount | None = None,
+        ) -> object:
+            del self
+            del collection
+            del account
+            raise ValueError("collection locator rejected")
+
+        with patch(
+            "archidekt_commander_mcp.server.DeckbuildingService.get_collection_overview",
+            new=fake_get_collection_overview,
+        ):
+            server = create_server(RuntimeSettings())
+            client = TestClient(server.streamable_http_app())
+            response = client.post("/api/overview", json={"collection": {"username": "tester"}})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "collection locator rejected")
+
+    def test_unhandled_error_maps_to_500(self) -> None:
+        async def fake_get_collection_overview(
+            self,
+            collection: CollectionLocator,
+            account: ArchidektAccount | AuthenticatedAccount | None = None,
+        ) -> object:
+            del self
+            del collection
+            del account
+            raise Exception("unexpected boom")
+
+        with patch(
+            "archidekt_commander_mcp.server.DeckbuildingService.get_collection_overview",
+            new=fake_get_collection_overview,
+        ):
+            server = create_server(RuntimeSettings())
+            client = TestClient(server.streamable_http_app(), raise_server_exceptions=False)
+            response = client.post("/api/overview", json={"collection": {"username": "tester"}})
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json()["error"], "Internal server error.")
+        self.assertEqual(response.json()["details"], "unexpected boom")
+
+
+class RuntimeCliContractTests(unittest.TestCase):
+    def test_parser_exposes_frozen_cli_flags(self) -> None:
+        parser = build_arg_parser()
+        option_strings = {option for action in parser._actions for option in action.option_strings}
+
+        self.assertTrue(
+            {
+                "--transport",
+                "--host",
+                "--port",
+                "--log-level",
+                "--cache-ttl-seconds",
+                "--personal-deck-cache-ttl-seconds",
+                "--redis-url",
+                "--redis-key-prefix",
+                "--http-timeout-seconds",
+                "--max-search-results",
+                "--scryfall-max-pages",
+                "--user-agent",
+                "--streamable-http-path",
+            }.issubset(option_strings)
+        )
+
+    def test_runtime_settings_builder_maps_cli_args(self) -> None:
+        parser = build_arg_parser()
+        args = parser.parse_args(
+            [
+                "--transport",
+                "streamable-http",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "9001",
+                "--log-level",
+                "debug",
+                "--cache-ttl-seconds",
+                "1234",
+                "--personal-deck-cache-ttl-seconds",
+                "321",
+                "--redis-url",
+                "redis://localhost:6379/9",
+                "--redis-key-prefix",
+                "test-prefix",
+                "--http-timeout-seconds",
+                "45",
+                "--max-search-results",
+                "33",
+                "--scryfall-max-pages",
+                "8",
+                "--user-agent",
+                "archidekt-mcp-test/1.0",
+                "--streamable-http-path",
+                "/custom-mcp",
+            ]
+        )
+
+        settings = build_runtime_settings_from_args(args)
+
+        self.assertEqual(settings.transport, "streamable-http")
+        self.assertEqual(settings.host, "127.0.0.1")
+        self.assertEqual(settings.port, 9001)
+        self.assertEqual(settings.log_level, "DEBUG")
+        self.assertEqual(settings.cache_ttl_seconds, 1234)
+        self.assertEqual(settings.personal_deck_cache_ttl_seconds, 321)
+        self.assertEqual(settings.redis_url, "redis://localhost:6379/9")
+        self.assertEqual(settings.redis_key_prefix, "test-prefix")
+        self.assertEqual(settings.http_timeout_seconds, 45.0)
+        self.assertEqual(settings.max_search_results, 33)
+        self.assertEqual(settings.scryfall_max_pages, 8)
+        self.assertEqual(settings.user_agent, "archidekt-mcp-test/1.0")
+        self.assertEqual(settings.streamable_http_path, "/custom-mcp")
 
 
 class RuntimeSettingsEnvTests(unittest.TestCase):
@@ -2131,7 +2378,22 @@ class ExactNameCacheTests(unittest.IsolatedAsyncioTestCase):
         await client.search_cards(filters)
 
         self.assertGreaterEqual(len(http_client.calls), 2,
-                                "Query-based search should not be cached and should make fresh requests")
+                                 "Query-based search should not be cached and should make fresh requests")
+
+    async def test_exact_name_cache_is_case_insensitive(self) -> None:
+        settings = RuntimeSettings(personal_deck_cache_ttl_seconds=0, archidekt_exact_name_cache_ttl_seconds=900)
+        http_client = FakeCardCatalogHttpClient()
+        client = ArchidektAuthenticatedClient(http_client, settings, redis_client=None)
+
+        await client.search_cards(ArchidektCardSearchFilters(exact_name=["Lightning Bolt"], game=1))
+        first_call_count = len(http_client.calls)
+        await client.search_cards(ArchidektCardSearchFilters(exact_name=["lightning bolt"], game=1))
+
+        self.assertEqual(
+            len(http_client.calls),
+            first_call_count,
+            "Exact-name cache should reuse case-insensitive key for the same name.",
+        )
 
 
 class ArchidektRequestBudgetTests(unittest.IsolatedAsyncioTestCase):

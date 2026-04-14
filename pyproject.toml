@@ -12,9 +12,11 @@ authors = [{ name = "Codex" }]
 dependencies = [
   "mcp[cli]>=1.27.0,<2",
   "httpx>=0.28,<1",
+  "mypy>=1.11,<2",
   "pydantic>=2.12,<3",
   "pydantic-settings>=2.5,<3",
   "redis>=5.2,<6",
+  "ruff>=0.12,<1",
   "starlette>=0.37,<2",
   "uvicorn>=0.30,<1",
 ]
@@ -27,3 +29,28 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["mcp.server.auth.provider"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+  "archidekt_commander_mcp.config",
+  "archidekt_commander_mcp.models",
+]
+disable_error_code = ["prop-decorator"]

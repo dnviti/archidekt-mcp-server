@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+# pyright: reportMissingImports=false
+
 from collections import defaultdict
 from typing import Iterable
 
-from .models import CardResult, CardSearchFilters, CollectionCardRecord
+from archidekt_commander_mcp.schemas.cards import CardResult
+from archidekt_commander_mcp.schemas.collections import CollectionCardRecord
+from archidekt_commander_mcp.schemas.search import CardSearchFilters
 
 
 _COLOR_WORD_MAP = {
@@ -215,10 +219,11 @@ def aggregate_owned_results(
     collection_id: int,
     base_url: str,
 ) -> list[CardResult]:
+    groups: dict[str, list[CollectionCardRecord]]
     if filters.unique_by == "printing":
         groups = {str(record.record_id): [record] for record in records}
     else:
-        groups: dict[str, list[CollectionCardRecord]] = defaultdict(list)
+        groups = defaultdict(list)
         for record in records:
             groups[record.oracle_id or record.name.casefold()].append(record)
 
@@ -306,12 +311,19 @@ def sort_card_results(results: list[CardResult], filters: CardSearchFilters) -> 
             return _RARITY_SORT_ORDER.get((result.rarity or "").casefold())
         return None
 
-    present_results = [result for result in results if sortable_value(result) is not None]
-    missing_results = [result for result in results if sortable_value(result) is None]
+    sortable_pairs = [(result, sortable_value(result)) for result in results]
+    present_results = [result for result, value in sortable_pairs if value is not None]
+    missing_results = [result for result, value in sortable_pairs if value is None]
 
     # Keep alphabetical ordering stable inside equal-value groups while still honoring desc/asc.
     present_results = sorted(present_results, key=lambda result: result.name.casefold())
-    present_results = sorted(present_results, key=lambda result: sortable_value(result), reverse=reverse)
+    present_with_values = [(result, sortable_value(result)) for result in present_results]
+    sorted_present_with_values = sorted(
+        present_with_values,
+        key=lambda item: item[1] if item[1] is not None else -1,
+        reverse=reverse,
+    )
+    present_results = [result for result, _ in sorted_present_with_values]
     missing_results = sorted(missing_results, key=lambda result: result.name.casefold())
     return present_results + missing_results
 

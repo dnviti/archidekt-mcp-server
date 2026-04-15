@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from importlib.resources import files
 import json
-from pathlib import Path
 
 from ..config import RuntimeSettings
 
 
-_HOME_TEMPLATE_PATH = Path(__file__).resolve().parent / "templates" / "home.html"
+_HOME_TEMPLATE = files("archidekt_commander_mcp.ui").joinpath("templates").joinpath("home.html")
 
 
 def render_home_page(settings: RuntimeSettings) -> str:
@@ -19,7 +19,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
         indent=2,
     )
 
-    template = _HOME_TEMPLATE_PATH.read_text(encoding="utf-8")
+    template = _HOME_TEMPLATE.read_text(encoding="utf-8")
     return template.format(
         auth_enabled=str(settings.auth_enabled).lower(),
         cache_ttl=settings.cache_ttl_seconds,

@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:
-    from .decks import PersonalDeckCardUsage
+
+class PersonalDeckCardUsage(BaseModel):
+    deck_id: int
+    deck_name: str
+    quantity: int
+    categories: list[str] = Field(default_factory=list)
+    private: bool = False
+    unlisted: bool = False
+    theorycrafted: bool = False
+    updated_at: datetime | None = None
 
 
 class CardResult(BaseModel):
@@ -40,7 +48,10 @@ class CardResult(BaseModel):
     archidekt_record_ids: list[int] = Field(default_factory=list)
     personal_deck_count: int | None = None
     personal_deck_total_quantity: int | None = None
-    personal_deck_usage: list["PersonalDeckCardUsage"] = Field(default_factory=list)
+    personal_deck_usage: list[PersonalDeckCardUsage] = Field(default_factory=list)
+    available_quantity: int | None = None
+    collection_only_usable: bool | None = None
+    collection_only_unavailable_reason: str | None = None
 
 
 class ArchidektCardReference(BaseModel):

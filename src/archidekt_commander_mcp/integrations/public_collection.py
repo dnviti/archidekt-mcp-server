@@ -10,8 +10,13 @@ from typing import Any
 
 from ..filtering import build_type_line, normalize_color_symbols
 from ..schemas.accounts import CollectionLocator
-from ..schemas.collections import CollectionCardRecord, CollectionSnapshot
-from .http_base import _ArchidektHttpClientBase, _auth_headers
+from ..schemas.collections import (
+    CollectionCardRecord,
+    CollectionExportDocument,
+    CollectionReadOptions,
+    CollectionSnapshot,
+)
+from .http_base import _ArchidektHttpClientBase, _auth_headers, _json_headers
 from .serialization import _normalize_legality, _parse_datetime, _safe_float, _safe_int
 
 
@@ -117,6 +122,76 @@ class ArchidektPublicCollectionClient(_ArchidektHttpClientBase):
             len(snapshot.records),
         )
         return snapshot
+
+    async def fetch_collection_export(
+        self,
+        collection: CollectionLocator,
+        options: CollectionReadOptions,
+        auth_token: str | None = None,
+    ) -> CollectionExportDocument:
+        collection_id = await self.resolve_collection_id(collection)
+        endpoint_url = (
+            f"{self.settings.normalized_archidekt_base_url}/api/collection/export/v2/{collection_id}/"
+        )
+        LOGGER.info(
+            "Starting Archidekt collection export collection_id=%s game=%s page_size=%s",
+            collection_id,
+            collection.game,
+            options.page_size,
+        )
+
+        page_number = 1
+        total_rows = 0
+        more_content = True
+        content_parts: list[str] = []
+        while more_content:
+            response = await self._request_archidekt(
+                "POST",
+                endpoint_url,
+                json={
+                    "fields": options.fields,
+                    "page": page_number,
+                    "game": collection.game,
+                    "pageSize": options.page_size,
+                },
+                headers=_json_headers(auth_token),
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise RuntimeError("Archidekt collection export returned an invalid payload.")
+
+            content = payload.get("content")
+            if not isinstance(content, str):
+                raise RuntimeError("Archidekt collection export did not return CSV content.")
+
+            content_parts.append(content)
+            total_rows = _safe_int(payload.get("totalRows")) or total_rows
+            more_content = bool(payload.get("moreContent"))
+            LOGGER.info(
+                "Fetched Archidekt collection export page %s rows=%s more=%s",
+                page_number,
+                total_rows,
+                more_content,
+            )
+
+            if options.max_pages is not None and page_number >= options.max_pages:
+                break
+            if not more_content:
+                break
+            page_number += 1
+
+        return CollectionExportDocument(
+            collection_id=collection_id,
+            game=collection.game,
+            endpoint_url=endpoint_url,
+            fields=tuple(options.fields),
+            page_size=options.page_size,
+            fetched_pages=page_number,
+            total_rows=total_rows,
+            more_available=more_content,
+            csv_content="".join(content_parts),
+        )
 
     async def _fetch_collection_page(
         self,

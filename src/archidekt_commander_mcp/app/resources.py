@@ -21,6 +21,8 @@ def register_resources(
         return (
             "Collection overview and collection search tools require `collection` with one of collection_id, "
             "collection_url, or username. The server is stateless, so do not rely on implicit session state. "
+            "Use read_collection for a complete Archidekt CSV export via /api/collection/export/v2/{user_id}/; "
+            "set options.export_to_file or options.file_path to save that export locally. "
             "Deck and collection mutation tools need an authenticated Archidekt identity, which can come from an "
             "explicit `account` object or the current MCP OAuth session."
         )
@@ -59,6 +61,10 @@ def register_resources(
             "because it returns the normalized account, inferred collection locator, and current personal decks. "
             "When the server is already connected through MCP OAuth, call login_archidekt without an account payload. "
             "When search_owned_cards returns personal_deck_usage, ask whether already-slotted cards may be reused. "
+            "For collection-only deckbuilding, use check_collection_card_availability before deck writes and avoid "
+            "cards where enough_copies=false or must_not_use=true. "
+            "Use read_collection instead of shelling out to Archidekt's collection export API when full CSV data or "
+            "a local CSV export is needed. "
             "Use search_archidekt_cards to resolve Archidekt card ids before deck or collection writes. "
             "If many exact card names must be checked, send them together as one `exact_name` list instead of one call per card. "
             "When the user requests sorting, prefer canonical filters such as `sort_by=unit_price` with "

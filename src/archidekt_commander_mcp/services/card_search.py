@@ -114,9 +114,14 @@ class CardSearchWorkflow:
             )
             usage_snapshot = await self._service._get_personal_deck_usage_snapshot(resolved_account)
             self._service._apply_personal_deck_usage(results, usage_snapshot)
+            self._service._apply_collection_availability(results)
             if any(result.personal_deck_count for result in results):
                 notes.append(
                     "Some owned cards already appear in personal decks. Ask the user whether those cards may be reused before finalizing a new deck."
+                )
+            if any(result.collection_only_usable is False for result in results):
+                notes.append(
+                    "Some owned cards have zero free copies after personal deck usage. For collection-only deckbuilding, do not use those cards; choose alternatives with positive `available_quantity`."
                 )
 
         sorted_results = sort_card_results(results, filters)

@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime, timedelta
 import hashlib
 import os
+import tempfile
 from typing import Any
 import unittest
 from urllib.parse import parse_qs, urlparse
@@ -21,6 +22,7 @@ from starlette.responses import JSONResponse
 from starlette.testclient import TestClient
 
 from archidekt_commander_mcp.clients import ArchidektAuthenticatedClient, ArchidektRequestGate, CollectionCache, ScryfallClient
+from archidekt_commander_mcp.integrations.public_collection import ArchidektPublicCollectionClient
 from archidekt_commander_mcp.config import RuntimeSettings
 from archidekt_commander_mcp.mcp_auth import (
     AUTH_SCOPE,
@@ -34,7 +36,10 @@ from archidekt_commander_mcp.models import (
     AuthenticatedAccount,
     CardResult,
     CardSearchFilters,
+    CollectionAvailabilityCardRequest,
+    CollectionAvailabilityOptions,
     CollectionCardDelete,
+    CollectionReadOptions,
     CollectionSearchRequest,
     CollectionCardUpsert,
     CollectionCardRecord,
@@ -287,7 +292,9 @@ class HttpRouteTests(unittest.TestCase):
         self.assertTrue(tools_by_name["search_unowned_cards"].annotations.readOnlyHint)
         self.assertTrue(tools_by_name["get_personal_deck_cards"].annotations.readOnlyHint)
         self.assertTrue(tools_by_name["list_personal_decks"].annotations.readOnlyHint)
+        self.assertTrue(tools_by_name["check_collection_card_availability"].annotations.readOnlyHint)
         self.assertFalse(tools_by_name["login_archidekt"].annotations.readOnlyHint)
+        self.assertFalse(tools_by_name["read_collection"].annotations.destructiveHint)
         self.assertFalse(tools_by_name["create_personal_deck"].annotations.destructiveHint)
         self.assertTrue(tools_by_name["modify_personal_deck_cards"].annotations.destructiveHint)
         self.assertTrue(tools_by_name["delete_personal_deck"].annotations.destructiveHint)
@@ -313,6 +320,8 @@ class HttpRouteTests(unittest.TestCase):
                 "upsert_collection_entries",
                 "delete_collection_entries",
                 "get_collection_overview",
+                "read_collection",
+                "check_collection_card_availability",
                 "refresh_collection_cache",
                 "search_owned_cards",
                 "search_unowned_cards",
@@ -1018,6 +1027,114 @@ def _pkce_challenge(verifier: str) -> str:
     return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("utf-8")).digest()).decode().rstrip("=")
 
 
+def _collection_record(
+    *,
+    record_id: int,
+    name: str,
+    quantity: int,
+    oracle_id: str,
+    card_id: int,
+) -> CollectionCardRecord:
+    return CollectionCardRecord(
+        record_id=record_id,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        quantity=quantity,
+        foil=False,
+        modifier=None,
+        tags=(),
+        condition_code=None,
+        language_code=None,
+        name=name,
+        display_name=None,
+        oracle_text="",
+        mana_cost=None,
+        cmc=None,
+        colors=(),
+        color_identity=(),
+        supertypes=(),
+        types=(),
+        subtypes=(),
+        type_line="",
+        keywords=(),
+        rarity=None,
+        set_code=None,
+        set_name=None,
+        commander_legal=True,
+        oracle_id=oracle_id,
+        card_id=card_id,
+        printing_id=None,
+        edhrec_rank=None,
+        image_uri=None,
+        prices={},
+    )
+
+
+class _AvailabilityAuthClient:
+    async def list_personal_decks(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        page_size: int = 100,
+    ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
+        del page_size
+        resolved = (
+            account
+            if isinstance(account, AuthenticatedAccount)
+            else AuthenticatedAccount(
+                token=account.token or "secret",
+                username=account.username,
+                user_id=account.user_id,
+            )
+        )
+        return (
+            resolved,
+            [
+                PersonalDeckSummary(
+                    id=7,
+                    name="Existing Ramp",
+                    owner_username=resolved.username,
+                    owner_id=resolved.user_id,
+                )
+            ],
+        )
+
+    async def fetch_deck_cards(
+        self,
+        account: AuthenticatedAccount,
+        deck_id: int,
+        include_deleted: bool = False,
+    ) -> dict[str, object]:
+        del account
+        del deck_id
+        del include_deleted
+        return {
+            "cards": [
+                {
+                    "quantity": 1,
+                    "categories": ["Ramp"],
+                    "card": {
+                        "displayName": "Sol Ring",
+                        "oracleCard": {
+                            "uid": "sol-ring-oracle",
+                            "name": "Sol Ring",
+                        },
+                    },
+                },
+                {
+                    "quantity": 1,
+                    "categories": ["Ramp"],
+                    "card": {
+                        "displayName": "Arcane Signet",
+                        "oracleCard": {
+                            "uid": "arcane-signet-oracle",
+                            "name": "Arcane Signet",
+                        },
+                    },
+                },
+            ]
+        }
+
+
 class CollectionCacheRedisTests(unittest.IsolatedAsyncioTestCase):
     async def test_reuses_snapshot_from_redis_without_refetching(self) -> None:
         snapshot = CollectionSnapshot(
@@ -1110,6 +1227,119 @@ class CollectionCacheRedisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cached_snapshot.collection_id, 123)
         self.assertEqual(reader_client.calls, 0)
         self.assertEqual(redis_client.ttl_calls, [])
+
+
+class CollectionReadExportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_collection_export_client_uses_archidekt_export_endpoint_pages(self) -> None:
+        requests: list[dict[str, object]] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content.decode("utf-8"))
+            requests.append(
+                {
+                    "method": request.method,
+                    "url": str(request.url),
+                    "authorization": request.headers.get("Authorization"),
+                    "payload": payload,
+                }
+            )
+            page = int(payload["page"])
+            content_by_page = {
+                1: "Quantity,Name,Edition Code\r\n4,+2 Mace,afr\r\n",
+                2: "1,Sol Ring,clb\r\n",
+            }
+            return httpx.Response(
+                200,
+                json={
+                    "content": content_by_page[page],
+                    "totalRows": 2,
+                    "moreContent": page == 1,
+                },
+                request=request,
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = ArchidektPublicCollectionClient(http_client, RuntimeSettings())
+            document = await client.fetch_collection_export(
+                CollectionLocator(collection_id=809591),
+                CollectionReadOptions(
+                    fields=[
+                        "quantity",
+                        "card__oracleCard__name",
+                        "card__edition__editioncode",
+                    ],
+                    page_size=1,
+                ),
+                auth_token="secret-token",
+            )
+
+        self.assertEqual(document.collection_id, 809591)
+        self.assertEqual(document.total_rows, 2)
+        self.assertEqual(document.fetched_pages, 2)
+        self.assertFalse(document.more_available)
+        self.assertEqual(
+            document.csv_content,
+            "Quantity,Name,Edition Code\r\n4,+2 Mace,afr\r\n1,Sol Ring,clb\r\n",
+        )
+        self.assertEqual(
+            [request["url"] for request in requests],
+            [
+                "https://archidekt.com/api/collection/export/v2/809591/",
+                "https://archidekt.com/api/collection/export/v2/809591/",
+            ],
+        )
+        self.assertEqual(requests[0]["method"], "POST")
+        self.assertEqual(requests[0]["authorization"], "JWT secret-token")
+        self.assertEqual(requests[0]["payload"]["pageSize"], 1)
+
+    async def test_read_collection_can_write_export_file_and_return_preview(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "content": "Quantity,Name,Edition Code\r\n1,Sol Ring,clb\r\n",
+                    "totalRows": 1,
+                    "moreContent": False,
+                },
+                request=request,
+            )
+
+        service = DeckbuildingService(RuntimeSettings())
+        original_http_client = service.http_client
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            service.http_client = http_client
+            service.archidekt_client = ArchidektPublicCollectionClient(
+                http_client,
+                service.settings,
+            )
+            with tempfile.TemporaryDirectory() as tmpdir:
+                file_path = os.path.join(tmpdir, "collection.csv")
+                response = await service.read_collection(
+                    CollectionLocator(collection_id=809591),
+                    CollectionReadOptions(
+                        fields=[
+                            "quantity",
+                            "card__oracleCard__name",
+                            "card__edition__editioncode",
+                        ],
+                        export_to_file=True,
+                        file_path=file_path,
+                    ),
+                )
+
+                self.assertEqual(response.total_rows, 1)
+                self.assertIsNone(response.csv_content)
+                self.assertEqual(response.rows_preview[0]["Name"], "Sol Ring")
+                self.assertIsNotNone(response.file)
+                assert response.file is not None
+                self.assertEqual(response.file.path, file_path)
+                with open(file_path, encoding="utf-8", newline="") as exported_file:
+                    self.assertEqual(
+                        exported_file.read(),
+                        "Quantity,Name,Edition Code\r\n1,Sol Ring,clb\r\n",
+                    )
+        await original_http_client.aclose()
+        await service.redis_client.aclose()
 
 
 class ArchidektCatalogSearchTests(unittest.IsolatedAsyncioTestCase):
@@ -1511,6 +1741,114 @@ class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
                 CardSearchFilters(exact_name=["Arcane Signet"]),
             )
             self.assertEqual(response.results[0].archidekt_card_ids, [150825])
+        finally:
+            await service.http_client.aclose()
+
+    async def test_check_collection_card_availability_blocks_used_up_collection_cards(self) -> None:
+        snapshot = CollectionSnapshot(
+            collection_id=321,
+            owner_id=321,
+            owner_username="tester",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=2,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/321",
+            records=[
+                _collection_record(
+                    record_id=1,
+                    name="Sol Ring",
+                    quantity=1,
+                    oracle_id="sol-ring-oracle",
+                    card_id=150824,
+                ),
+                _collection_record(
+                    record_id=2,
+                    name="Arcane Signet",
+                    quantity=2,
+                    oracle_id="arcane-signet-oracle",
+                    card_id=150825,
+                ),
+            ],
+        )
+        service = DeckbuildingService(RuntimeSettings())
+        original_redis = service.redis_client
+        fake_redis = FakeRedis()
+        collection_client = FakeCollectionClient(snapshot)
+        service.redis_client = fake_redis
+        service.cache.redis = fake_redis
+        service.archidekt_client = collection_client
+        service.cache.client = collection_client
+        service.auth_client = _AvailabilityAuthClient()
+        await original_redis.aclose()
+        try:
+            response = await service.check_collection_card_availability(
+                CollectionLocator(collection_id=321),
+                [
+                    CollectionAvailabilityCardRequest(name="Sol Ring"),
+                    CollectionAvailabilityCardRequest(name="Arcane Signet"),
+                ],
+                CollectionAvailabilityOptions(collection_only=True),
+                AuthenticatedAccount(token="secret", username="tester", user_id=321),
+            )
+
+            results_by_name = {result.matched_name: result for result in response.results}
+            self.assertFalse(response.all_requested_available)
+            self.assertEqual(response.blocked_count, 1)
+            self.assertEqual(results_by_name["Sol Ring"].collection_quantity, 1)
+            self.assertEqual(results_by_name["Sol Ring"].used_in_decks_quantity, 1)
+            self.assertEqual(results_by_name["Sol Ring"].available_quantity, 0)
+            self.assertFalse(results_by_name["Sol Ring"].enough_copies)
+            self.assertTrue(results_by_name["Sol Ring"].must_not_use)
+            self.assertEqual(results_by_name["Sol Ring"].status, "all_copies_used")
+            self.assertEqual(results_by_name["Arcane Signet"].available_quantity, 1)
+            self.assertTrue(results_by_name["Arcane Signet"].enough_copies)
+            self.assertFalse(results_by_name["Arcane Signet"].must_not_use)
+        finally:
+            await service.http_client.aclose()
+
+    async def test_authenticated_search_owned_cards_includes_available_quantity(self) -> None:
+        snapshot = CollectionSnapshot(
+            collection_id=321,
+            owner_id=321,
+            owner_username="tester",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=1,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/321",
+            records=[
+                _collection_record(
+                    record_id=1,
+                    name="Sol Ring",
+                    quantity=1,
+                    oracle_id="sol-ring-oracle",
+                    card_id=150824,
+                )
+            ],
+        )
+        service = DeckbuildingService(RuntimeSettings())
+        original_redis = service.redis_client
+        fake_redis = FakeRedis()
+        collection_client = FakeCollectionClient(snapshot)
+        service.redis_client = fake_redis
+        service.cache.redis = fake_redis
+        service.archidekt_client = collection_client
+        service.cache.client = collection_client
+        service.auth_client = _AvailabilityAuthClient()
+        await original_redis.aclose()
+        try:
+            response = await service.search_owned_cards(
+                CollectionLocator(collection_id=321),
+                CardSearchFilters(exact_name=["Sol Ring"]),
+                AuthenticatedAccount(token="secret", username="tester", user_id=321),
+            )
+
+            self.assertEqual(response.results[0].available_quantity, 0)
+            self.assertFalse(response.results[0].collection_only_usable)
+            self.assertIn("zero free copies", " ".join(response.notes))
         finally:
             await service.http_client.aclose()
 

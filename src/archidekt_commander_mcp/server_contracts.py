@@ -33,6 +33,14 @@ Stateless rules:
 - If the user asks about owned cards, use `search_owned_cards`.
 - If the user asks about missing cards or upgrades, use `search_unowned_cards`.
 - Use `get_collection_overview` when you need context on the owned pool.
+- Use `read_collection` when you need the complete raw collection export or the user asks to export
+  their collection as CSV. It calls Archidekt's `/api/collection/export/v2/{user_id}/` endpoint through
+  the MCP server. Set `options.include_csv_content=true` only when the model needs the full CSV in the
+  tool result; set `options.export_to_file=true` or `options.file_path` when the user wants a local file.
+- When the user asks to build only from their collection, call `check_collection_card_availability`
+  before writing deck cards if a candidate may already be used in personal decks. Treat
+  `available_quantity` as collection quantity minus personal deck usage. Do not add cards with
+  `must_not_use=true` or `enough_copies=false`; select a different owned card instead.
 - Use `list_personal_decks` when the user wants their own decks or when private deck context matters.
 - Use `get_personal_deck_cards` before editing an existing deck when you need `deck_relation_id` values.
 - If the user explicitly asks to create or update a deck on Archidekt, use the authenticated deck and
@@ -69,6 +77,9 @@ Final response format:
 - The strategy guide should describe the game plan, key synergies, pacing, and win conditions.
 - When `search_owned_cards` returns `personal_deck_usage`, treat that as "already used in other personal
   decks" context and ask the user whether they want to reuse those cards before finalizing a new deck.
+- When `search_owned_cards` returns `available_quantity`, prefer cards with positive availability for
+  collection-only deckbuilding. If availability is zero or negative, do not recommend or add that card
+  unless the user explicitly permits reusing copies from existing decks.
 - When `search_owned_cards` returns `archidekt_card_ids`, reuse those ids for deck or collection writes
   instead of guessing Archidekt card ids.
 - When you present deck additions or recommendations, group cards by category.

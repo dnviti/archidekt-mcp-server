@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .cards import PersonalDeckCardUsage as PersonalDeckCardUsage
 from .search import _normalize_optional_text, _normalize_string_list
 
 
@@ -43,17 +44,6 @@ class PersonalDeckSummary(BaseModel):
     owner_id: int | None = None
     owner_username: str | None = None
     colors: dict[str, int] = Field(default_factory=dict)
-
-
-class PersonalDeckCardUsage(BaseModel):
-    deck_id: int
-    deck_name: str
-    quantity: int
-    categories: list[str] = Field(default_factory=list)
-    private: bool = False
-    unlisted: bool = False
-    theorycrafted: bool = False
-    updated_at: datetime | None = None
 
 
 class PersonalDecksResponse(BaseModel):

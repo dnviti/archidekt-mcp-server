@@ -7,7 +7,13 @@ from mcp.server.fastmcp import FastMCP
 
 from ..config import RuntimeSettings
 from ..schemas.accounts import ArchidektAccount, CollectionLocator
-from ..schemas.collections import CollectionCardDelete, CollectionCardUpsert
+from ..schemas.collections import (
+    CollectionAvailabilityCardRequest,
+    CollectionAvailabilityOptions,
+    CollectionCardDelete,
+    CollectionCardUpsert,
+    CollectionReadOptions,
+)
 from ..schemas.decks import PersonalDeckCardMutation, PersonalDeckCreateInput, PersonalDeckUpdateInput
 from ..schemas.search import ArchidektCardSearchFilters, CardSearchFilters
 from ..services.account_resolution import describe_account, describe_collection_locator
@@ -168,7 +174,9 @@ def register_mcp_tools(
             "`search_owned_cards`, or `get_personal_deck_cards` first to resolve the needed ids. "
             "Use `modifications.quantity` for the exact copy count when a card should appear more than once. "
             "Commander decks should normally keep non-basic cards at one copy, while non-Commander decks "
-            "usually cap non-basic cards at four copies and allow unlimited basic lands."
+            "usually cap non-basic cards at four copies and allow unlimited basic lands. If the user has "
+            "asked to use only collection cards, call `check_collection_card_availability` first and do not "
+            "add cards where `must_not_use=true` or `enough_copies=false`."
         ),
     )
     async def modify_personal_deck_cards(
@@ -255,6 +263,67 @@ def register_mcp_tools(
     @server.tool(
         annotations=NON_DESTRUCTIVE_WRITE_TOOL_ANNOTATIONS,
         description=(
+            "Read the requested Archidekt collection through Archidekt's own "
+            "`/api/collection/export/v2/{user_id}/` CSV export endpoint. Use this instead of raw curl "
+            "when complete collection data is needed for ownership checks. `options` defaults to fetching "
+            "all export pages with Archidekt's standard fields and returns a parsed preview. Set "
+            "`options.include_csv_content=true` when the model needs the full CSV content in the tool "
+            "response. Set `options.export_to_file=true` or provide `options.file_path` when the user asks "
+            "to export the collection as a CSV file; the response returns the written file path."
+        ),
+    )
+    async def read_collection(
+        collection: CollectionLocator,
+        options: CollectionReadOptions | None = None,
+        account: ArchidektAccount | None = None,
+    ) -> dict:
+        active_service = await get_service()
+        LOGGER.info(
+            "Tool call: read_collection locator=%s account=%s export_to_file=%s include_csv_content=%s",
+            describe_collection_locator(collection),
+            describe_account(account),
+            bool(options and (options.export_to_file or options.file_path)),
+            bool(options and options.include_csv_content),
+        )
+        response = await active_service.read_collection(collection, options, account)
+        return response.model_dump(mode="json")
+
+    @server.tool(
+        annotations=READ_ONLY_TOOL_ANNOTATIONS,
+        description=(
+            "Check whether requested cards have enough free copies for a new or edited deck. "
+            "This combines the authenticated collection snapshot with personal deck usage: "
+            "`available_quantity = collection_quantity - used_in_decks_quantity`. Use this before "
+            "`modify_personal_deck_cards` when the user says to use only collection cards. If "
+            "`collection_only=true`, cards with `must_not_use=true` or `enough_copies=false` must be "
+            "replaced with other owned cards. `options.exclude_deck_ids` can ignore the deck currently "
+            "being edited."
+        ),
+    )
+    async def check_collection_card_availability(
+        collection: CollectionLocator,
+        cards: list[CollectionAvailabilityCardRequest],
+        options: CollectionAvailabilityOptions | None = None,
+        account: ArchidektAccount | None = None,
+    ) -> dict:
+        active_service = await get_service()
+        LOGGER.info(
+            "Tool call: check_collection_card_availability locator=%s account=%s count=%s",
+            describe_collection_locator(collection),
+            describe_account(account),
+            len(cards),
+        )
+        response = await active_service.check_collection_card_availability(
+            collection=collection,
+            cards=cards,
+            options=options,
+            account=account,
+        )
+        return response.model_dump(mode="json")
+
+    @server.tool(
+        annotations=NON_DESTRUCTIVE_WRITE_TOOL_ANNOTATIONS,
+        description=(
             "Force-refresh the cache entry for the requested collection. "
             "Always requires a `collection` object and optionally accepts `account` for private collections."
         ),
@@ -278,7 +347,7 @@ def register_mcp_tools(
         description=(
             "Search only cards owned in the Archidekt collection provided in the request. "
             "Requires `collection`, accepts `filters`, and optionally accepts `account` to include "
-            "private collection access plus personal deck usage annotations."
+            "private collection access plus personal deck usage and collection-only availability annotations."
         ),
     )
     async def search_owned_cards(

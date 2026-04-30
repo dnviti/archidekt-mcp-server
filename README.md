@@ -28,7 +28,10 @@ MCP tools:
 - `delete_personal_deck(deck_id, [account])`
 - `modify_personal_deck_cards(deck_id, cards, [account])`
 - `upsert_collection_entries(entries, [account])`
+- `delete_collection_entries(entries, [account])`
 - `get_collection_overview(collection)`
+- `read_collection(collection, [options], [account])`
+- `check_collection_card_availability(collection, cards, [options], [account])`
 - `refresh_collection_cache(collection)`
 - `search_owned_cards(collection, filters)`
 - `search_unowned_cards(collection, filters)`
@@ -46,6 +49,7 @@ HTTP routes:
 - `/api/personal-decks/delete` stateless HTTP test for `delete_personal_deck`
 - `/api/personal-decks/modify-cards` stateless HTTP test for `modify_personal_deck_cards`
 - `/api/collection/upsert` stateless HTTP test for `upsert_collection_entries`
+- `/api/collection/delete` stateless HTTP test for `delete_collection_entries`
 - `/api/overview` stateless HTTP test for `get_collection_overview`
 - `/api/search-owned` stateless HTTP test for `search_owned_cards`
 - `/api/search-unowned` stateless HTTP test for `search_unowned_cards`
@@ -110,6 +114,16 @@ Authenticated example:
 When `search_owned_cards` is called with `account`, or when an MCP auth session is active, the response may include `personal_deck_usage`,
 `personal_deck_count`, and `personal_deck_total_quantity` on each owned result so the LLM can warn
 that a candidate card is already committed to other personal decks.
+
+For a complete raw collection export, use `read_collection` instead of direct Archidekt API calls. It posts to
+Archidekt's `/api/collection/export/v2/{user_id}/` endpoint, follows export pages, returns a parsed preview,
+and can write the CSV locally when `options.export_to_file=true` or `options.file_path` is provided. Set
+`options.include_csv_content=true` only when the model needs the full CSV in the MCP tool result.
+
+For collection-only deckbuilding, use `check_collection_card_availability` before adding candidates to a deck.
+It calculates `available_quantity = collection_quantity - used_in_decks_quantity` from the authenticated collection
+and personal deck usage. Cards with `enough_copies=false` or `must_not_use=true` should be replaced with another
+owned card unless the user explicitly allows reusing copies already committed to existing decks.
 
 ## MCP OAuth Auth
 

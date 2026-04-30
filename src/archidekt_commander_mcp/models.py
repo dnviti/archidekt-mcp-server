@@ -21,15 +21,23 @@ from archidekt_commander_mcp.schemas.accounts import (
 )
 from archidekt_commander_mcp.schemas.cards import ArchidektCardReference, ArchidektCardSearchResponse, CardResult
 from archidekt_commander_mcp.schemas.collections import (
+    AvailabilityStatus,
+    CollectionAvailabilityCardRequest,
+    CollectionAvailabilityOptions,
+    CollectionAvailabilityResponse,
     _COLLECTION_DELETE_RECORD_ID_DESCRIPTION,
     _COLLECTION_QUANTITY_DESCRIPTION,
     _COLLECTION_RECORD_ID_DESCRIPTION,
+    CollectionCardAvailability,
     CollectionCardDelete,
     CollectionCardRecord,
     CollectionCardUpsert,
     CollectionCardUpsertResult,
+    CollectionExportFile,
     CollectionMutationResponse,
     CollectionOverview,
+    CollectionReadOptions,
+    CollectionReadResponse,
     CollectionSnapshot,
 )
 from archidekt_commander_mcp.schemas.decks import (
@@ -112,6 +120,14 @@ __all__ = [
     "CollectionSnapshot",
     "CardResult",
     "CollectionOverview",
+    "AvailabilityStatus",
+    "CollectionAvailabilityCardRequest",
+    "CollectionAvailabilityOptions",
+    "CollectionAvailabilityResponse",
+    "CollectionCardAvailability",
+    "CollectionReadOptions",
+    "CollectionReadResponse",
+    "CollectionExportFile",
     "CollectionOverviewRequest",
     "CollectionSearchRequest",
     "ArchidektCardSearchFilters",

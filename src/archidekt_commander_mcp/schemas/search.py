@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-if TYPE_CHECKING:
-    from .cards import CardResult
+from .cards import CardResult
 
 
 ColorSymbol = Literal["W", "U", "B", "R", "G"]
@@ -315,4 +314,4 @@ class SearchResponse(BaseModel):
     total_matches: int | None = None
     has_more: bool | None = None
     notes: list[str] = Field(default_factory=list)
-    results: list["CardResult"]
+    results: list[CardResult]

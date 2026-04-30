@@ -256,3 +256,20 @@ def _apply_personal_deck_usage(
         ]
         result.personal_deck_count = len(usages)
         result.personal_deck_total_quantity = sum(usage.quantity for usage in usages)
+
+
+def _apply_collection_availability(results: list[CardResult]) -> None:
+    for result in results:
+        if result.quantity is None:
+            continue
+
+        used_quantity = result.personal_deck_total_quantity or 0
+        available_quantity = result.quantity - used_quantity
+        result.available_quantity = available_quantity
+        result.collection_only_usable = available_quantity > 0
+        if available_quantity <= 0:
+            result.collection_only_unavailable_reason = (
+                "All owned copies are already used in personal decks."
+                if result.quantity > 0
+                else "No owned copies were found in the collection."
+            )

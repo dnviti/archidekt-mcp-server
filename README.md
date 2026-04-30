@@ -308,6 +308,12 @@ The app service uses environment variables instead of a long command override:
 - `ARCHIDEKT_MCP_FORWARDED_ALLOW_IPS`, set to `*` in the bundled compose file so access logs use the client IP from trusted reverse proxy headers
 - plus image defaults for host, port, transport, and cache TTL
 
+If you access the container directly through Docker's published port, Uvicorn may still show the Docker bridge
+gateway address, such as `192.168.x.1`. Docker NAT does not pass the original browser IP to the container.
+To log the real external client IP, put the app behind a reverse proxy that sets `X-Forwarded-For` or
+`X-Real-IP`, or use host networking on Linux; then keep `ARCHIDEKT_MCP_FORWARDED_ALLOW_IPS` limited to the
+trusted proxy address or CIDR instead of `*`.
+
 ## GitHub Actions
 
 The workflow in `.github/workflows/docker.yml` does two things:

@@ -203,6 +203,40 @@ class HttpRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["client_host"], "10.0.0.2")
 
+    def test_trusted_real_ip_header_updates_request_client_host(self) -> None:
+        async def client_ip(request: Any) -> JSONResponse:
+            return JSONResponse({"client_host": request.client.host if request.client else None})
+
+        server = create_server(RuntimeSettings(forwarded_allow_ips="10.0.0.2"))
+        app = server.streamable_http_app()
+        app.add_route("/debug-client-ip", client_ip, methods=["GET"])
+        client = TestClient(app, client=("10.0.0.2", 50000))
+
+        response = client.get(
+            "/debug-client-ip",
+            headers={"X-Real-IP": "203.0.113.42"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["client_host"], "203.0.113.42")
+
+    def test_untrusted_real_ip_header_does_not_update_request_client_host(self) -> None:
+        async def client_ip(request: Any) -> JSONResponse:
+            return JSONResponse({"client_host": request.client.host if request.client else None})
+
+        server = create_server(RuntimeSettings(forwarded_allow_ips="127.0.0.1"))
+        app = server.streamable_http_app()
+        app.add_route("/debug-client-ip", client_ip, methods=["GET"])
+        client = TestClient(app, client=("10.0.0.2", 50000))
+
+        response = client.get(
+            "/debug-client-ip",
+            headers={"X-Real-IP": "203.0.113.42"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["client_host"], "10.0.0.2")
+
     def test_post_only_api_routes_reject_get_with_405(self) -> None:
         server = create_server(RuntimeSettings())
         client = TestClient(server.streamable_http_app())
@@ -310,6 +344,33 @@ class ApiErrorMappingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"], "Remote HTTP error from Archidekt or Scryfall.")
+
+    def test_upstream_auth_error_maps_to_reconnect_required(self) -> None:
+        async def fake_get_collection_overview(
+            self,
+            collection: CollectionLocator,
+            account: ArchidektAccount | AuthenticatedAccount | None = None,
+        ) -> object:
+            del self
+            del collection
+            del account
+            request = httpx.Request("GET", "https://archidekt.com/api/decks/v3/")
+            response = httpx.Response(401, request=request)
+            raise httpx.HTTPStatusError("archidekt token expired", request=request, response=response)
+
+        with patch(
+            "archidekt_commander_mcp.server.DeckbuildingService.get_collection_overview",
+            new=fake_get_collection_overview,
+        ):
+            server = create_server(RuntimeSettings())
+            client = TestClient(server.streamable_http_app(), raise_server_exceptions=False)
+            response = client.post("/api/overview", json={"collection": {"username": "tester"}})
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            response.json()["error"],
+            "Archidekt authentication needs attention. Reconnect Archidekt and try again.",
+        )
 
     def test_value_error_maps_to_400(self) -> None:
         async def fake_get_collection_overview(
@@ -2025,6 +2086,62 @@ class PersonalDeckUsageAnnotationTests(unittest.TestCase):
 
 
 class OAuthHttpRouteTests(unittest.TestCase):
+    def test_stale_oauth_archidekt_token_returns_reconnect_required(self) -> None:
+        redis_client = FakeRedis()
+        provider = RedisArchidektOAuthProvider(
+            redis_client,
+            key_prefix="archidekt-commander",
+            issuer_url="https://testserver",
+        )
+        session = provider._build_session(
+            client_id="web-ui-client",
+            scopes=[AUTH_SCOPE],
+            resource="https://testserver/mcp",
+            archidekt_token="expired-archidekt-token",
+            archidekt_username="oauth-user",
+            archidekt_user_id=111,
+        )
+        asyncio.run(provider._store_session(session["access"], session["refresh"], session["record"]))
+
+        async def fake_list_personal_decks(
+            self,
+            account: ArchidektAccount | AuthenticatedAccount,
+            page_size: int = 100,
+        ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
+            del self
+            del account
+            del page_size
+            request = httpx.Request("GET", "https://archidekt.com/api/decks/v3/")
+            response = httpx.Response(401, request=request)
+            raise httpx.HTTPStatusError("archidekt token expired", request=request, response=response)
+
+        with (
+            patch("archidekt_commander_mcp.app_factory.redis_async.from_url", return_value=redis_client),
+            patch(
+                "archidekt_commander_mcp.app_factory.ArchidektAuthenticatedClient.list_personal_decks",
+                new=fake_list_personal_decks,
+            ),
+        ):
+            server = create_server(
+                RuntimeSettings(
+                    auth_enabled=True,
+                    public_base_url="https://testserver",
+                    redis_url="redis://fake/0",
+                )
+            )
+            client = TestClient(server.streamable_http_app(), raise_server_exceptions=False)
+            response = client.post(
+                "/api/login",
+                json={},
+                headers={"Authorization": f"Bearer {session['access'].token}"},
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            response.json()["error"],
+            "Archidekt authentication needs attention. Reconnect Archidekt and try again.",
+        )
+
     def test_oauth_round_trip_supports_accountless_private_api_calls(self) -> None:
         redis_client = FakeRedis()
 

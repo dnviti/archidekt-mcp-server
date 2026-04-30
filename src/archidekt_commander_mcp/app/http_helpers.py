@@ -34,6 +34,12 @@ async def _handle_api_request(
     try:
         result = await handler(parsed)
     except httpx.HTTPStatusError as error:
+        if error.response.status_code in {401, 403}:
+            return _json_error(
+                401,
+                "Archidekt authentication needs attention. Reconnect Archidekt and try again.",
+                str(error),
+            )
         return _json_error(502, "Remote HTTP error from Archidekt or Scryfall.", str(error))
     except (httpx.HTTPError, RuntimeError, ValueError) as error:
         return _json_error(400, str(error))

@@ -90,14 +90,7 @@ class CollectionCache:
             if not isinstance(snapshot_payload, dict):
                 raise ValueError("incomplete cache payload")
             snapshot = deserialize_collection_snapshot(snapshot_payload)
-            ttl = await self._ttl(redis_key)
-            if ttl is not None:
-                LOGGER.info(
-                    "Using Redis collection snapshot for %s; expires in %ss",
-                    cache_key,
-                    ttl,
-                )
-            elif saved_at is not None:
+            if saved_at is not None:
                 LOGGER.info(
                     "Using Redis collection snapshot for %s; saved at %s",
                     cache_key,
@@ -145,14 +138,6 @@ class CollectionCache:
                 cache_key,
                 error,
             )
-
-    async def _ttl(self, redis_key: str) -> int | None:
-        ttl = await self.redis.ttl(redis_key)
-        if isinstance(ttl, int) and ttl >= 0:
-            return ttl
-        if isinstance(ttl, int) and ttl == -1:
-            return None
-        return None
 
     async def _delete_key(self, redis_key: str) -> None:
         try:

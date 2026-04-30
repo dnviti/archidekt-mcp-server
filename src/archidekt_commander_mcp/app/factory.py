@@ -1,6 +1,7 @@
 # pyright: reportMissingImports=false, reportAttributeAccessIssue=false
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, Literal, cast
 
@@ -56,6 +57,7 @@ class ProxyHeaderFastMCP(FastMCP):
 def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
     runtime = runtime_settings or RuntimeSettings()
     service_state: dict[str, DeckbuildingService | None] = {"service": None}
+    service_lock: asyncio.Lock | None = None
     auth_redis_client = None
     auth_provider = None
     auth_settings = None
@@ -133,11 +135,20 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
     )
 
     async def get_service() -> DeckbuildingService:
+        nonlocal service_lock
         active_service = service_state["service"]
-        if active_service is None:
-            LOGGER.info("Creating DeckbuildingService")
-            active_service = build_service()
-            service_state["service"] = active_service
+        if active_service is not None:
+            return active_service
+
+        if service_lock is None:
+            service_lock = asyncio.Lock()
+
+        async with service_lock:
+            active_service = service_state["service"]
+            if active_service is None:
+                LOGGER.info("Creating DeckbuildingService")
+                active_service = build_service()
+                service_state["service"] = active_service
         return active_service
 
     @server.custom_route("/", methods=["GET"])

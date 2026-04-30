@@ -65,5 +65,5 @@ async def _ensure_account_identity(
 ) -> AuthenticatedAccount:
     if account.username and account.user_id is not None:
         return account
-    resolved_account, _ = await service.auth_client.list_personal_decks(account)
+    resolved_account, _ = await service._get_authenticated_deck_list(account)
     return resolved_account

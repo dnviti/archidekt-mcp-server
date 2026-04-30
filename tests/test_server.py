@@ -17,6 +17,7 @@ from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull
 from pydantic import ValidationError
 import httpx
+from redis.exceptions import RedisError
 from starlette.responses import JSONResponse
 from starlette.testclient import TestClient
 
@@ -650,6 +651,105 @@ class FakeAuthLoginClient:
         )
 
 
+class CountingFakeAuthLoginClient(FakeAuthLoginClient):
+    def __init__(self) -> None:
+        self.list_calls = 0
+
+    async def list_personal_decks(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        page_size: int = 100,
+    ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
+        self.list_calls += 1
+        return await super().list_personal_decks(account, page_size)
+
+
+class TokenScopedDeckListClient:
+    def __init__(self) -> None:
+        self.list_calls: list[str] = []
+
+    async def resolve_account(self, account: ArchidektAccount) -> AuthenticatedAccount:
+        return AuthenticatedAccount(
+            token=account.token or "secret",
+            username=account.username,
+            user_id=account.user_id,
+        )
+
+    async def list_personal_decks(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        page_size: int = 100,
+    ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
+        del page_size
+        if isinstance(account, AuthenticatedAccount):
+            token = account.token
+            username = account.username or "tester"
+            user_id = account.user_id or 123
+        else:
+            token = account.token or "secret"
+            username = account.username or "tester"
+            user_id = account.user_id or 123
+        self.list_calls.append(token)
+        deck_id = int(hashlib.sha256(token.encode("utf-8")).hexdigest()[:6], 16)
+        return (
+            AuthenticatedAccount(token=token, username=username, user_id=user_id),
+            [
+                PersonalDeckSummary(
+                    id=deck_id,
+                    name=f"Deck for {token}",
+                    owner_username=username,
+                    owner_id=user_id,
+                )
+            ],
+        )
+
+
+class TokenScopedDeckMutationClient(TokenScopedDeckListClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.create_calls: list[str] = []
+        self.deck_card_calls: list[tuple[str, int]] = []
+
+    async def create_deck(
+        self,
+        account: AuthenticatedAccount,
+        deck: PersonalDeckCreateInput,
+    ) -> tuple[dict[str, Any], PersonalDeckSummary | None]:
+        self.create_calls.append(account.token)
+        summary = PersonalDeckSummary(
+            id=99,
+            name=deck.name,
+            owner_username=account.username or "tester",
+            owner_id=account.user_id or 123,
+        )
+        return {"id": 99, "name": deck.name}, summary
+
+    async def fetch_deck_cards(
+        self,
+        account: AuthenticatedAccount,
+        deck_id: int,
+        include_deleted: bool = False,
+    ) -> dict[str, object]:
+        del include_deleted
+        self.deck_card_calls.append((account.token, deck_id))
+        return {"deckId": deck_id, "cards": []}
+
+
+class VerifiedTokenAuthClient(FakeAuthMutationClient):
+    def __init__(self, identities_by_token: dict[str, AuthenticatedAccount]) -> None:
+        super().__init__()
+        self.identities_by_token = identities_by_token
+
+    async def resolve_account(self, account: ArchidektAccount) -> AuthenticatedAccount:
+        token = account.token or ""
+        resolved = self.identities_by_token[token]
+        return AuthenticatedAccount(
+            token=token,
+            username=resolved.username,
+            user_id=resolved.user_id,
+        )
+
+
 class FakeCatalogLookupClient:
     def __init__(self, references_by_name: dict[str, list[ArchidektCardReference]]) -> None:
         self.references_by_name = {
@@ -697,6 +797,45 @@ class FakeHttpResponse:
 
     def json(self) -> dict[str, object]:
         return self._payload
+
+
+class RecordingDeckListHttpClient:
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+
+    async def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
+        del kwargs
+        url_text = str(url)
+        self.urls.append(url_text)
+        if "/api/decks/curated/self/" in url_text:
+            payload: dict[str, object] | list[object] = {"results": []}
+        else:
+            payload = {
+                "results": [
+                    {
+                        "id": 17,
+                        "name": "Known Identity Deck",
+                        "owner": {"id": 123, "username": "tester"},
+                    }
+                ],
+                "next": None,
+        }
+        return httpx.Response(200, json=payload, request=httpx.Request(method, url_text))
+
+
+class IdentityResolvingHttpClient:
+    async def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
+        del kwargs
+        payload = {
+            "results": [
+                {
+                    "id": 17,
+                    "name": "Verified Identity Deck",
+                    "owner": {"id": 123, "username": "verified-user"},
+                }
+            ]
+        }
+        return httpx.Response(200, json=payload, request=httpx.Request(method, str(url)))
 
 
 class FakeStatusHttpResponse(FakeHttpResponse):
@@ -908,9 +1047,9 @@ class FakeCardCatalogHttpClient:
 
 class FakeRedis:
     def __init__(self) -> None:
-        self.storage: dict[str, tuple[str, datetime | None]] = {}
+        self.storage: dict[str, tuple[object, datetime | None]] = {}
 
-    async def get(self, key: str) -> str | None:
+    def _live_entry(self, key: str) -> tuple[object, datetime | None] | None:
         entry = self.storage.get(key)
         if entry is None:
             return None
@@ -918,6 +1057,16 @@ class FakeRedis:
         payload, expires_at = entry
         if expires_at is not None and datetime.now(UTC) >= expires_at:
             self.storage.pop(key, None)
+            return None
+        return payload, expires_at
+
+    async def get(self, key: str) -> str | None:
+        entry = self._live_entry(key)
+        if entry is None:
+            return None
+
+        payload, _ = entry
+        if not isinstance(payload, str):
             return None
         return payload
 
@@ -927,7 +1076,7 @@ class FakeRedis:
         return True
 
     async def ttl(self, key: str) -> int:
-        entry = self.storage.get(key)
+        entry = self._live_entry(key)
         if entry is None:
             return -2
 
@@ -949,8 +1098,83 @@ class FakeRedis:
             self.storage.pop(key, None)
         return deleted
 
+    async def sadd(self, key: str, *values: str) -> int:
+        entry = self._live_entry(key)
+        expires_at = entry[1] if entry is not None else None
+        existing = entry[0] if entry is not None else set()
+        members = set(existing) if isinstance(existing, set) else set()
+        added = 0
+        for value in values:
+            if value not in members:
+                added += 1
+                members.add(value)
+        self.storage[key] = (members, expires_at)
+        return added
+
+    async def smembers(self, key: str) -> set[str]:
+        entry = self._live_entry(key)
+        if entry is None:
+            return set()
+        payload, _ = entry
+        if not isinstance(payload, set):
+            return set()
+        return {str(member) for member in payload}
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        entry = self._live_entry(key)
+        if entry is None:
+            return False
+        payload, _ = entry
+        self.storage[key] = (payload, datetime.now(UTC) + timedelta(seconds=seconds))
+        return True
+
+    async def execute_command(self, command: str, *args: object) -> object:
+        normalized = command.upper()
+        if normalized == "SADD":
+            key = str(args[0])
+            values = tuple(str(value) for value in args[1:])
+            return await self.sadd(key, *values)
+        if normalized == "SMEMBERS":
+            return await self.smembers(str(args[0]))
+        if normalized == "EXPIRE":
+            return await self.expire(str(args[0]), int(args[1]))
+        raise NotImplementedError(f"FakeRedis does not implement {command}")
+
     async def aclose(self) -> None:
         return None
+
+
+class TtlTrackingRedis(FakeRedis):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ttl_calls: list[str] = []
+
+    async def ttl(self, key: str) -> int:
+        self.ttl_calls.append(key)
+        return await super().ttl(key)
+
+
+class FailingDeckListRedis(FakeRedis):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_get = False
+        self.fail_execute = False
+        self.fail_delete = False
+
+    async def get(self, key: str) -> str | None:
+        if self.fail_get:
+            raise RedisError("simulated redis read failure")
+        return await super().get(key)
+
+    async def execute_command(self, command: str, *args: object) -> object:
+        if self.fail_execute:
+            raise RedisError("simulated redis command failure")
+        return await super().execute_command(command, *args)
+
+    async def delete(self, *keys: str) -> int:
+        if self.fail_delete:
+            raise RedisError("simulated redis delete failure")
+        return await super().delete(*keys)
 
 
 class OAuthProviderTests(unittest.IsolatedAsyncioTestCase):
@@ -1455,6 +1679,33 @@ class CollectionCacheRedisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second_snapshot.records[0].name, "Sol Ring")
         self.assertTrue(redis_client.storage)
 
+    async def test_collection_cache_hit_does_not_probe_redis_ttl(self) -> None:
+        snapshot = CollectionSnapshot(
+            collection_id=123,
+            owner_id=456,
+            owner_username="tester",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=0,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/123",
+            records=[],
+        )
+        collection = CollectionLocator(username="tester")
+        redis_client = TtlTrackingRedis()
+
+        writer_cache = CollectionCache(FakeCollectionClient(snapshot), redis_client, ttl_seconds=86400)
+        await writer_cache.get_snapshot(collection)
+
+        reader_client = FakeCollectionClient(snapshot)
+        reader_cache = CollectionCache(reader_client, redis_client, ttl_seconds=86400)
+        cached_snapshot = await reader_cache.get_snapshot(collection)
+
+        self.assertEqual(cached_snapshot.collection_id, 123)
+        self.assertEqual(reader_client.calls, 0)
+        self.assertEqual(redis_client.ttl_calls, [])
+
 
 class ArchidektCatalogSearchTests(unittest.IsolatedAsyncioTestCase):
     async def test_batches_multiple_exact_name_lookups_in_one_call(self) -> None:
@@ -1639,6 +1890,72 @@ class ArchidektCatalogSearchTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(second_service.archidekt_client.calls, 0)
         finally:
             await second_service.http_client.aclose()
+
+    async def test_private_snapshot_cache_hit_does_not_probe_redis_ttl(self) -> None:
+        snapshot = CollectionSnapshot(
+            collection_id=321,
+            owner_id=654,
+            owner_username="private-user",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=0,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/321",
+            records=[],
+        )
+        redis_client = TtlTrackingRedis()
+        account = AuthenticatedAccount(token="secret", username="private-user", user_id=321)
+        collection = CollectionLocator(collection_id=321)
+
+        first_service = DeckbuildingService(RuntimeSettings())
+        first_original_redis = first_service.redis_client
+        first_service.redis_client = redis_client
+        first_service.archidekt_client = FakeCollectionClient(snapshot)
+        await first_original_redis.aclose()
+        try:
+            await first_service.get_snapshot(collection, account=account)
+        finally:
+            await first_service.http_client.aclose()
+
+        second_service = DeckbuildingService(RuntimeSettings())
+        second_original_redis = second_service.redis_client
+        second_service.redis_client = redis_client
+        second_service.archidekt_client = FakeCollectionClient(snapshot)
+        await second_original_redis.aclose()
+        try:
+            cached_snapshot = await second_service.get_snapshot(collection, account=account)
+            self.assertEqual(cached_snapshot.collection_id, 321)
+            self.assertEqual(second_service.archidekt_client.calls, 0)
+            self.assertEqual(redis_client.ttl_calls, [])
+        finally:
+            await second_service.http_client.aclose()
+
+
+class AuthenticatedDeckListingClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_known_identity_list_personal_decks_skips_curated_self(self) -> None:
+        http_client = RecordingDeckListHttpClient()
+        client = ArchidektAuthenticatedClient(http_client, RuntimeSettings())
+
+        resolved_account, decks = await client.list_personal_decks(
+            AuthenticatedAccount(token="secret", username="tester", user_id=123)
+        )
+
+        self.assertEqual(resolved_account.username, "tester")
+        self.assertEqual(resolved_account.user_id, 123)
+        self.assertEqual([deck.name for deck in decks], ["Known Identity Deck"])
+        self.assertTrue(any("/api/decks/v3/" in url for url in http_client.urls))
+        self.assertFalse(any("/api/decks/curated/self/" in url for url in http_client.urls))
+
+    async def test_resolve_account_ignores_asserted_identity_for_token_auth(self) -> None:
+        client = ArchidektAuthenticatedClient(IdentityResolvingHttpClient(), RuntimeSettings())
+
+        resolved_account = await client.resolve_account(
+            ArchidektAccount(token="secret", username="spoofed-user", user_id=999)
+        )
+
+        self.assertEqual(resolved_account.username, "verified-user")
+        self.assertEqual(resolved_account.user_id, 123)
 
 
 class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
@@ -1972,6 +2289,74 @@ class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
             any("private:collection:private-collection:id:321:game:1:user:222" in key for key in redis_keys)
         )
 
+    async def test_token_payload_cannot_read_another_users_warmed_private_cache(self) -> None:
+        victim_snapshot = CollectionSnapshot(
+            collection_id=321,
+            owner_id=321,
+            owner_username="victim-user",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=1,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/321",
+            records=[],
+        )
+        attacker_snapshot = CollectionSnapshot(
+            collection_id=321,
+            owner_id=999,
+            owner_username="attacker-user",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=1,
+            fetched_at=datetime.now(UTC) + timedelta(seconds=5),
+            source_url="https://archidekt.com/collection/v2/321",
+            records=[],
+        )
+        service = DeckbuildingService(RuntimeSettings())
+        original_redis = service.redis_client
+        redis_client = FakeRedis()
+        collection_client = FakeCollectionClient(victim_snapshot)
+        service.redis_client = redis_client
+        service.cache.redis = redis_client
+        service.archidekt_client = collection_client
+        service.cache.client = collection_client
+        service.auth_client = VerifiedTokenAuthClient(
+            {
+                "victim-token": AuthenticatedAccount(
+                    token="victim-token", username="victim-user", user_id=321
+                ),
+                "attacker-token": AuthenticatedAccount(
+                    token="attacker-token", username="attacker-user", user_id=999
+                ),
+            }
+        )
+        await original_redis.aclose()
+        locator = CollectionLocator(collection_id=321)
+        try:
+            victim_response = await service.get_snapshot(
+                locator,
+                account=ArchidektAccount(token="victim-token"),
+            )
+            self.assertEqual(victim_response.owner_username, "victim-user")
+
+            collection_client.snapshot = attacker_snapshot
+            attacker_response = await service.get_snapshot(
+                locator,
+                account=ArchidektAccount(
+                    token="attacker-token",
+                    username="victim-user",
+                    user_id=321,
+                ),
+            )
+
+            self.assertEqual(attacker_response.owner_username, "attacker-user")
+            self.assertEqual(collection_client.calls, 2)
+            self.assertEqual(collection_client.auth_tokens, ["victim-token", "attacker-token"])
+        finally:
+            await service.aclose()
+
     async def test_upsert_collection_entries_invalidates_public_and_private_caches(self) -> None:
         snapshot = CollectionSnapshot(
             collection_id=321,
@@ -2079,7 +2464,70 @@ class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await service.http_client.aclose()
 
-    async def test_recent_collection_write_bypasses_authenticated_snapshot_cache_once(self) -> None:
+    async def test_cross_service_invalidation_prevents_stale_private_memory_reuse(self) -> None:
+        stale_snapshot = CollectionSnapshot(
+            collection_id=321,
+            owner_id=321,
+            owner_username="private-user",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=1,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/321",
+            records=[],
+        )
+        fresh_snapshot = CollectionSnapshot(
+            collection_id=321,
+            owner_id=321,
+            owner_username="private-user",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=2,
+            fetched_at=datetime.now(UTC) + timedelta(seconds=5),
+            source_url="https://archidekt.com/collection/v2/321",
+            records=[],
+        )
+        redis_client = FakeRedis()
+        account = AuthenticatedAccount(token="secret")
+        locator = CollectionLocator(collection_id=321)
+
+        first_service = DeckbuildingService(RuntimeSettings())
+        first_original_redis = first_service.redis_client
+        first_collection_client = FakeCollectionClient(stale_snapshot)
+        first_service.redis_client = redis_client
+        first_service.archidekt_client = first_collection_client
+        first_service.auth_client = FakeAuthMutationClient()
+        await first_original_redis.aclose()
+
+        second_service = DeckbuildingService(RuntimeSettings())
+        second_original_redis = second_service.redis_client
+        second_service.redis_client = redis_client
+        second_service.cache.redis = redis_client
+        second_service.auth_client = FakeAuthMutationClient()
+        await second_original_redis.aclose()
+
+        try:
+            first_response = await first_service.get_snapshot(locator, account=account)
+            self.assertEqual(first_response.total_records, 1)
+            self.assertEqual(first_collection_client.calls, 1)
+
+            await second_service.upsert_collection_entries(
+                entries=[CollectionCardUpsert(card_id=150824, quantity=1, game=1)],
+                account=account,
+            )
+
+            first_collection_client.snapshot = fresh_snapshot
+            refreshed_response = await first_service.get_snapshot(locator, account=account)
+
+            self.assertEqual(refreshed_response.total_records, 2)
+            self.assertEqual(first_collection_client.calls, 2)
+        finally:
+            await first_service.aclose()
+            await second_service.aclose()
+
+    async def test_recent_collection_write_bypasses_authenticated_snapshot_cache_while_marker_is_active(self) -> None:
         snapshot = CollectionSnapshot(
             collection_id=321,
             owner_id=321,
@@ -2120,13 +2568,80 @@ class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
 
             first_result = await service.get_snapshot(locator, account=account)
             second_result = await service.get_snapshot(locator, account=account)
+            marker_key = service._private_redis_key(
+                "recent-collection-write",
+                service._collection_write_marker_key(resolved_account, locator.game),
+            )
 
             self.assertEqual(first_result.collection_id, 321)
             self.assertEqual(second_result.collection_id, 321)
-            self.assertEqual(collection_client.calls, 1)
-            self.assertFalse(service._recent_collection_write_markers)
+            self.assertEqual(collection_client.calls, 2)
+            self.assertNotIn(
+                service._private_redis_key("collection", cache_key),
+                redis_client.storage,
+            )
+            self.assertIn(marker_key, redis_client.storage)
         finally:
             await service.http_client.aclose()
+
+    async def test_recent_collection_write_marker_is_shared_across_services(self) -> None:
+        snapshot = CollectionSnapshot(
+            collection_id=321,
+            owner_id=321,
+            owner_username="private-user",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=1,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/321",
+            records=[],
+        )
+        account = AuthenticatedAccount(token="secret")
+        resolved_account = AuthenticatedAccount(token="secret", username="private-user", user_id=321)
+        locator = CollectionLocator(collection_id=321)
+        redis_client = FakeRedis()
+
+        first_service = DeckbuildingService(RuntimeSettings())
+        first_original_redis = first_service.redis_client
+        first_collection_client = FakeCollectionClient(snapshot)
+        first_service.redis_client = redis_client
+        first_service.cache.redis = redis_client
+        first_service.archidekt_client = first_collection_client
+        first_service.cache.client = first_collection_client
+        first_service.auth_client = FakeAuthMutationClient()
+        await first_original_redis.aclose()
+
+        second_service = DeckbuildingService(RuntimeSettings())
+        second_original_redis = second_service.redis_client
+        second_service.redis_client = redis_client
+        second_service.cache.redis = redis_client
+        second_service.archidekt_client = FakeCollectionClient(snapshot)
+        second_service.cache.client = second_service.archidekt_client
+        second_service.auth_client = FakeAuthMutationClient()
+        await second_original_redis.aclose()
+
+        try:
+            await first_service.get_snapshot(locator, account=account)
+            await second_service.upsert_collection_entries(
+                entries=[CollectionCardUpsert(card_id=150824, quantity=1, game=1)],
+                account=account,
+            )
+
+            first_result = await first_service.get_snapshot(locator, account=account)
+            second_result = await first_service.get_snapshot(locator, account=account)
+            cache_key = first_service._private_redis_key(
+                "collection",
+                first_service._private_snapshot_cache_key(locator, resolved_account),
+            )
+
+            self.assertEqual(first_result.collection_id, 321)
+            self.assertEqual(second_result.collection_id, 321)
+            self.assertEqual(first_collection_client.calls, 3)
+            self.assertNotIn(cache_key, redis_client.storage)
+        finally:
+            await first_service.aclose()
+            await second_service.aclose()
 
 
 class PersonalDeckUsageAnnotationTests(unittest.TestCase):
@@ -2450,46 +2965,97 @@ class ArchidektRetryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AuthenticatedDeckListCachingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_second_login_uses_cached_deck_list(self) -> None:
+    async def test_repeated_token_only_authenticated_deck_list_calls_reuse_cache(self) -> None:
         service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
         original_redis = service.redis_client
-        service.auth_client = FakeAuthLoginClient()
+        fake_redis = FakeRedis()
+        fake_auth_client = TokenScopedDeckListClient()
+        service.redis_client = fake_redis
+        service.auth_client = fake_auth_client
+        await original_redis.aclose()
+        account = AuthenticatedAccount(token="token-repeat")
+        try:
+            first_account, first_decks = await service._get_authenticated_deck_list(account)
+            second_account, second_decks = await service._get_authenticated_deck_list(account)
+
+            cache_key = service._private_redis_key(
+                "authenticated-deck-list",
+                service._private_authenticated_deck_list_cache_key(account),
+            )
+            self.assertEqual(first_account.token, "token-repeat")
+            self.assertEqual(second_account.token, "token-repeat")
+            self.assertEqual(first_account.username, "tester")
+            self.assertEqual(second_account.username, "tester")
+            self.assertEqual(first_decks[0].name, "Deck for token-repeat")
+            self.assertEqual(second_decks[0].name, "Deck for token-repeat")
+            self.assertEqual(fake_auth_client.list_calls, ["token-repeat"])
+            self.assertIn(cache_key, fake_redis.storage)
+        finally:
+            await service.aclose()
+
+    async def test_different_tokens_with_same_claimed_identity_do_not_share_authenticated_deck_list_cache(self) -> None:
+        service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
+        original_redis = service.redis_client
+        fake_redis = FakeRedis()
+        fake_auth_client = TokenScopedDeckListClient()
+        service.redis_client = fake_redis
+        service.auth_client = fake_auth_client
+        await original_redis.aclose()
+        first_account = AuthenticatedAccount(token="token-alpha", username="tester", user_id=123)
+        second_account = AuthenticatedAccount(token="token-bravo", username="tester", user_id=123)
+        try:
+            _, first_decks = await service._get_authenticated_deck_list(first_account)
+            _, second_decks = await service._get_authenticated_deck_list(second_account)
+
+            first_cache_key = service._private_redis_key(
+                "authenticated-deck-list",
+                service._private_authenticated_deck_list_cache_key(first_account),
+            )
+            second_cache_key = service._private_redis_key(
+                "authenticated-deck-list",
+                service._private_authenticated_deck_list_cache_key(second_account),
+            )
+            self.assertEqual(fake_auth_client.list_calls, ["token-alpha", "token-bravo"])
+            self.assertEqual(first_decks[0].name, "Deck for token-alpha")
+            self.assertEqual(second_decks[0].name, "Deck for token-bravo")
+            self.assertNotEqual(first_cache_key, second_cache_key)
+            self.assertIn(first_cache_key, fake_redis.storage)
+            self.assertIn(second_cache_key, fake_redis.storage)
+        finally:
+            await service.aclose()
+
+    async def test_login_and_list_personal_decks_share_cached_deck_list(self) -> None:
+        service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
+        original_redis = service.redis_client
+        fake_auth_client = CountingFakeAuthLoginClient()
+        service.redis_client = FakeRedis()
+        service.auth_client = fake_auth_client
         await original_redis.aclose()
         try:
-            response1 = await service.login_archidekt(ArchidektAccount(username="tester", password="hunter2"))
-            self.assertEqual(response1.account.username, "tester")
+            login_response = await service.login_archidekt(
+                ArchidektAccount(username="tester", password="hunter2")
+            )
+            self.assertEqual(login_response.account.username, "tester")
 
-            response2 = await service.login_archidekt(ArchidektAccount(username="tester", password="hunter2"))
-            self.assertEqual(response2.account.username, "tester")
-            self.assertEqual(response2.personal_decks.total_decks, 2)
+            response = await service.list_personal_decks(login_response.account)
+            self.assertEqual(response.owner_username, "tester")
+            self.assertEqual(response.total_decks, 2)
+            self.assertEqual(fake_auth_client.list_calls, 1)
         finally:
             await service.aclose()
 
     async def test_deck_write_invalidates_deck_list_cache(self) -> None:
-        snapshot = CollectionSnapshot(
-            collection_id=123,
-            owner_id=456,
-            owner_username="tester",
-            game=1,
-            page_size=100,
-            total_pages=1,
-            total_records=0,
-            fetched_at=datetime.now(UTC),
-            source_url="https://archidekt.com/collection/v2/123",
-            records=[],
-        )
         service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
         original_redis = service.redis_client
         fake_redis = FakeRedis()
-        collection_client = FakeCollectionClient(snapshot)
+        fake_auth_client = TokenScopedDeckMutationClient()
         service.redis_client = fake_redis
         service.cache.redis = fake_redis
-        service.archidekt_client = collection_client
-        service.cache.client = collection_client
-        service.auth_client = FakeAuthMutationClient()
+        service.auth_client = fake_auth_client
         await original_redis.aclose()
-        account = AuthenticatedAccount(token="secret", username="tester", user_id=1)
+        account = AuthenticatedAccount(token="secret", username="tester", user_id=123)
         try:
+            await service.list_personal_decks(account)
             await service.create_personal_deck(
                 deck=PersonalDeckCreateInput(name="New Deck", deck_format=1),
                 account=account,
@@ -2497,7 +3063,198 @@ class AuthenticatedDeckListCachingTests(unittest.IsolatedAsyncioTestCase):
 
             list_response = await service.list_personal_decks(account)
             self.assertEqual(list_response.owner_username, "tester")
-            self.assertIsNotNone(list_response)
+            self.assertEqual(fake_auth_client.list_calls, ["secret", "secret"])
+        finally:
+            await service.aclose()
+
+    async def test_deck_write_clears_local_deck_list_cache_when_redis_invalidation_fails(self) -> None:
+        service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
+        original_redis = service.redis_client
+        failing_redis = FailingDeckListRedis()
+        fake_auth_client = TokenScopedDeckMutationClient()
+        service.redis_client = failing_redis
+        service.cache.redis = failing_redis
+        service.auth_client = fake_auth_client
+        await original_redis.aclose()
+        account = AuthenticatedAccount(token="secret", username="tester", user_id=123)
+        try:
+            await service.list_personal_decks(account)
+            failing_redis.fail_execute = True
+
+            await service.create_personal_deck(
+                deck=PersonalDeckCreateInput(name="Invalidate Failure", deck_format=1),
+                account=account,
+            )
+
+            list_response = await service.list_personal_decks(account)
+            self.assertEqual(list_response.owner_username, "tester")
+            self.assertEqual(fake_auth_client.list_calls, ["secret", "secret"])
+        finally:
+            await service.aclose()
+
+    async def test_deck_write_invalidates_deck_list_cache_for_other_tokens_of_same_user(self) -> None:
+        service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
+        original_redis = service.redis_client
+        fake_redis = FakeRedis()
+        fake_auth_client = TokenScopedDeckMutationClient()
+        service.redis_client = fake_redis
+        service.cache.redis = fake_redis
+        service.auth_client = fake_auth_client
+        await original_redis.aclose()
+        first_account = AuthenticatedAccount(token="token-alpha", username="tester", user_id=123)
+        second_account = AuthenticatedAccount(token="token-bravo", username="tester", user_id=123)
+        try:
+            await service.list_personal_decks(first_account)
+            await service.list_personal_decks(second_account)
+            await service.create_personal_deck(
+                deck=PersonalDeckCreateInput(name="Updated Deck", deck_format=1),
+                account=first_account,
+            )
+
+            response = await service.list_personal_decks(second_account)
+            self.assertEqual(response.owner_username, "tester")
+            self.assertEqual(
+                fake_auth_client.list_calls,
+                ["token-alpha", "token-bravo", "token-bravo"],
+            )
+        finally:
+            await service.aclose()
+
+    async def test_deck_write_invalidates_deck_list_cache_across_services_for_same_user(self) -> None:
+        shared_redis = FakeRedis()
+        shared_auth_client = TokenScopedDeckMutationClient()
+
+        first_service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
+        first_original_redis = first_service.redis_client
+        first_service.redis_client = shared_redis
+        first_service.cache.redis = shared_redis
+        first_service.auth_client = shared_auth_client
+        await first_original_redis.aclose()
+
+        second_service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
+        second_original_redis = second_service.redis_client
+        second_service.redis_client = shared_redis
+        second_service.cache.redis = shared_redis
+        second_service.auth_client = shared_auth_client
+        await second_original_redis.aclose()
+
+        first_account = AuthenticatedAccount(token="token-alpha", username="tester", user_id=123)
+        second_account = AuthenticatedAccount(token="token-bravo", username="tester", user_id=123)
+        try:
+            await first_service.list_personal_decks(first_account)
+            await second_service.list_personal_decks(second_account)
+            await first_service.create_personal_deck(
+                deck=PersonalDeckCreateInput(name="Shared Update", deck_format=1),
+                account=first_account,
+            )
+
+            response = await second_service.list_personal_decks(second_account)
+            self.assertEqual(response.owner_username, "tester")
+            self.assertEqual(
+                shared_auth_client.list_calls,
+                ["token-alpha", "token-bravo", "token-bravo"],
+            )
+        finally:
+            await first_service.aclose()
+            await second_service.aclose()
+
+    async def test_deck_write_invalidates_personal_deck_usage_cache(self) -> None:
+        service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
+        original_redis = service.redis_client
+        fake_redis = FakeRedis()
+        fake_auth_client = TokenScopedDeckMutationClient()
+        service.redis_client = fake_redis
+        service.cache.redis = fake_redis
+        service.auth_client = fake_auth_client
+        await original_redis.aclose()
+        account = AuthenticatedAccount(token="usage-token", username="tester", user_id=123)
+        try:
+            await service._get_personal_deck_usage_snapshot(account)
+            await service.create_personal_deck(
+                deck=PersonalDeckCreateInput(name="Usage Refresh", deck_format=1),
+                account=account,
+            )
+            await service._get_personal_deck_usage_snapshot(account)
+
+            self.assertEqual(fake_auth_client.list_calls, ["usage-token", "usage-token"])
+            self.assertEqual(len(fake_auth_client.deck_card_calls), 2)
+        finally:
+            await service.aclose()
+
+    async def test_deck_write_invalidates_token_only_personal_deck_usage_cache(self) -> None:
+        service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
+        original_redis = service.redis_client
+        fake_redis = FakeRedis()
+        fake_auth_client = TokenScopedDeckMutationClient()
+        service.redis_client = fake_redis
+        service.cache.redis = fake_redis
+        service.auth_client = fake_auth_client
+        await original_redis.aclose()
+        token_only_account = AuthenticatedAccount(token="usage-token")
+        resolved_account = AuthenticatedAccount(token="usage-token", username="tester", user_id=123)
+        try:
+            await service._get_personal_deck_usage_snapshot(token_only_account)
+            await service.create_personal_deck(
+                deck=PersonalDeckCreateInput(name="Usage Token Refresh", deck_format=1),
+                account=resolved_account,
+            )
+            await service._get_personal_deck_usage_snapshot(token_only_account)
+
+            self.assertEqual(fake_auth_client.list_calls, ["usage-token", "usage-token"])
+            self.assertEqual(len(fake_auth_client.deck_card_calls), 2)
+        finally:
+            await service.aclose()
+
+    async def test_deck_write_refreshes_personal_deck_usage_when_usage_redis_invalidation_fails(self) -> None:
+        service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
+        original_redis = service.redis_client
+        failing_redis = FailingDeckListRedis()
+        fake_auth_client = TokenScopedDeckMutationClient()
+        service.redis_client = failing_redis
+        service.cache.redis = failing_redis
+        service.auth_client = fake_auth_client
+        await original_redis.aclose()
+        account = AuthenticatedAccount(token="usage-token", username="tester", user_id=123)
+        try:
+            await service._get_personal_deck_usage_snapshot(account)
+            failing_redis.fail_delete = True
+
+            await service.create_personal_deck(
+                deck=PersonalDeckCreateInput(name="Usage Redis Failure", deck_format=1),
+                account=account,
+            )
+            await service.list_personal_decks(account)
+            await service._get_personal_deck_usage_snapshot(account)
+
+            self.assertEqual(fake_auth_client.list_calls, ["usage-token", "usage-token"])
+            self.assertEqual(len(fake_auth_client.deck_card_calls), 2)
+        finally:
+            await service.aclose()
+
+    async def test_deck_write_refreshes_deck_list_when_usage_read_happens_first_after_redis_invalidation_failure(self) -> None:
+        service = DeckbuildingService(RuntimeSettings(personal_deck_cache_ttl_seconds=900))
+        original_redis = service.redis_client
+        failing_redis = FailingDeckListRedis()
+        fake_auth_client = TokenScopedDeckMutationClient()
+        service.redis_client = failing_redis
+        service.cache.redis = failing_redis
+        service.auth_client = fake_auth_client
+        await original_redis.aclose()
+        account = AuthenticatedAccount(token="mirror-token", username="tester", user_id=123)
+        try:
+            await service.list_personal_decks(account)
+            await service._get_personal_deck_usage_snapshot(account)
+            failing_redis.fail_delete = True
+
+            await service.create_personal_deck(
+                deck=PersonalDeckCreateInput(name="Mirror Redis Failure", deck_format=1),
+                account=account,
+            )
+            await service._get_personal_deck_usage_snapshot(account)
+            await service.list_personal_decks(account)
+
+            self.assertEqual(fake_auth_client.list_calls, ["mirror-token", "mirror-token"])
+            self.assertEqual(len(fake_auth_client.deck_card_calls), 2)
         finally:
             await service.aclose()
 
@@ -2590,9 +3347,9 @@ class ArchidektRequestBudgetTests(unittest.IsolatedAsyncioTestCase):
 
         settings = RuntimeSettings()
         http_client = httpx.AsyncClient(timeout=httpx.Timeout(5))
-        gate = CountingGate()
+        CountingGate()
 
-        scryfall = ScryfallClient(http_client, settings)
+        ScryfallClient(http_client, settings)
         self.assertEqual(gate_calls, 0,
                           "ScryfallClient should not use the Archidekt request gate")
 

@@ -64,11 +64,13 @@ from .serialization import (
 )
 from .snapshot_cache import (
     _account_collection_locators as _account_collection_locators_impl,
+    _clear_personal_deck_cache_refresh as _clear_personal_deck_cache_refresh_impl,
     _collection_write_marker_key as _collection_write_marker_key_impl,
     _consume_recent_collection_write as _consume_recent_collection_write_impl,
     _deduplicate_personal_decks as _deduplicate_personal_decks_impl,
     _delete_private_redis_key as _delete_private_redis_key_impl,
     _get_authenticated_deck_list as _get_authenticated_deck_list_impl,
+    _has_personal_deck_cache_refresh_marker as _has_personal_deck_cache_refresh_marker_impl,
     _invalidate_authenticated_deck_list_cache as _invalidate_authenticated_deck_list_cache_impl,
     _invalidate_collection_caches as _invalidate_collection_caches_impl,
     _invalidate_personal_deck_caches as _invalidate_personal_deck_caches_impl,
@@ -79,13 +81,13 @@ from .snapshot_cache import (
     _load_private_memory_cache as _load_private_memory_cache_impl,
     _load_private_redis_cache as _load_private_redis_cache_impl,
     _lock_for_key as _lock_for_key_impl,
+    _mark_personal_deck_cache_refresh as _mark_personal_deck_cache_refresh_impl,
     _mark_recent_collection_write as _mark_recent_collection_write_impl,
     _private_account_cache_key as _private_account_cache_key_impl,
     _private_authenticated_deck_list_cache_key as _private_authenticated_deck_list_cache_key_impl,
     _private_redis_key as _private_redis_key_impl,
     _private_snapshot_cache_key as _private_snapshot_cache_key_impl,
     _private_usage_cache_key as _private_usage_cache_key_impl,
-    _private_redis_ttl as _private_redis_ttl_impl,
     _store_authenticated_deck_list_in_redis as _store_authenticated_deck_list_in_redis_impl,
     _store_private_cache as _store_private_cache_impl,
     _store_private_memory_cache as _store_private_memory_cache_impl,
@@ -157,6 +159,8 @@ class DeckbuildingService:
         self._locks: dict[str, asyncio.Lock] = {}
         self._private_snapshot_cache: dict[str, tuple[datetime, Any]] = {}
         self._authenticated_deck_list_cache: dict[str, tuple[datetime, AuthenticatedDeckListSnapshot]] = {}
+        self._authenticated_deck_list_cache_index: dict[str, set[str]] = {}
+        self._personal_deck_cache_refresh_markers: dict[str, datetime] = {}
         self._personal_deck_usage_cache: dict[str, tuple[datetime, PersonalDeckUsageSnapshot]] = {}
         self._recent_collection_write_markers: dict[str, datetime] = {}
 
@@ -257,6 +261,30 @@ class DeckbuildingService:
     def _deduplicate_personal_decks(self, decks: list[PersonalDeckSummary]) -> list[PersonalDeckSummary]:
         return _deduplicate_personal_decks_impl(self, decks)
 
+    def _mark_personal_deck_cache_refresh(
+        self,
+        account: AuthenticatedAccount,
+        family: str = "all",
+        deck_list_cache_key: str | None = None,
+    ) -> None:
+        _mark_personal_deck_cache_refresh_impl(self, account, family, deck_list_cache_key)
+
+    def _has_personal_deck_cache_refresh_marker(
+        self,
+        account: AuthenticatedAccount,
+        family: str,
+        deck_list_cache_key: str | None = None,
+    ) -> bool:
+        return _has_personal_deck_cache_refresh_marker_impl(self, account, family, deck_list_cache_key)
+
+    def _clear_personal_deck_cache_refresh(
+        self,
+        account: AuthenticatedAccount,
+        family: str,
+        deck_list_cache_key: str | None = None,
+    ) -> None:
+        _clear_personal_deck_cache_refresh_impl(self, account, family, deck_list_cache_key)
+
     async def _get_authenticated_deck_list(
         self,
         account: AuthenticatedAccount,
@@ -267,7 +295,7 @@ class DeckbuildingService:
     async def _load_authenticated_deck_list_from_redis(
         self,
         cache_key: str,
-    ) -> AuthenticatedDeckListSnapshot | None:
+    ) -> tuple[AuthenticatedDeckListSnapshot | None, bool]:
         return await _load_authenticated_deck_list_from_redis_impl(self, cache_key)
 
     async def _store_authenticated_deck_list_in_redis(
@@ -324,7 +352,7 @@ class DeckbuildingService:
         namespace: str,
         key: str,
         deserializer: Callable[[dict[str, Any]], Any],
-    ) -> Any | None:
+    ) -> tuple[Any | None, bool]:
         return await _load_private_redis_cache_impl(self, namespace, key, deserializer)
 
     async def _store_private_redis_cache(
@@ -335,9 +363,6 @@ class DeckbuildingService:
         serializer: Callable[[Any], dict[str, Any]],
     ) -> None:
         await _store_private_redis_cache_impl(self, namespace, key, value, serializer)
-
-    async def _private_redis_ttl(self, redis_key: str) -> int | None:
-        return await _private_redis_ttl_impl(self, redis_key)
 
     async def _delete_private_redis_key(self, redis_key: str) -> None:
         await _delete_private_redis_key_impl(self, redis_key)
@@ -356,19 +381,19 @@ class DeckbuildingService:
     ) -> bool:
         return _is_self_collection_locator_impl(self, collection, account)
 
-    def _mark_recent_collection_write(
+    async def _mark_recent_collection_write(
         self,
         account: AuthenticatedAccount,
         games: set[int],
     ) -> None:
-        _mark_recent_collection_write_impl(self, account, games)
+        await _mark_recent_collection_write_impl(self, account, games)
 
-    def _consume_recent_collection_write(
+    async def _consume_recent_collection_write(
         self,
         collection: CollectionLocator,
         account: AuthenticatedAccount,
     ) -> bool:
-        return _consume_recent_collection_write_impl(self, collection, account)
+        return await _consume_recent_collection_write_impl(self, collection, account)
 
     async def _invalidate_personal_deck_usage_cache(self, account: AuthenticatedAccount) -> None:
         await _invalidate_personal_deck_usage_cache_impl(self, account)
@@ -396,8 +421,10 @@ class DeckbuildingService:
         resolved_account = await self._coerce_account(account)
         if resolved_account.username is None or resolved_account.user_id is None:
             resolved_account = await self._ensure_account_identity(resolved_account)
-        if not force_refresh and self._consume_recent_collection_write(collection, resolved_account):
+        skip_cache_store = False
+        if not force_refresh and await self._consume_recent_collection_write(collection, resolved_account):
             force_refresh = True
+            skip_cache_store = True
             LOGGER.info(
                 "Bypassing cached snapshot for %s after a recent authenticated collection write",
                 collection.cache_key,
@@ -431,21 +458,24 @@ class DeckbuildingService:
                     collection,
                     auth_token=resolved_account.token,
                 )
-            await self._store_private_cache(
-                self._private_snapshot_cache,
-                "collection",
-                cache_key,
-                snapshot,
-                serialize_collection_snapshot,
-            )
+            if not skip_cache_store:
+                await self._store_private_cache(
+                    self._private_snapshot_cache,
+                    "collection",
+                    cache_key,
+                    snapshot,
+                    serialize_collection_snapshot,
+                )
+            else:
+                LOGGER.info(
+                    "Skipping cached snapshot store for %s while a recent authenticated write marker is active",
+                    collection.cache_key,
+                )
             return snapshot
 
     async def login_archidekt(self, account: ArchidektAccount | None = None) -> ArchidektLoginResponse:
         resolved_account = await self._coerce_account(account)
-        if resolved_account.user_id is None or resolved_account.username is None:
-            resolved_account, decks = await self.auth_client.list_personal_decks(resolved_account)
-        else:
-            _, decks = await self.auth_client.list_personal_decks(resolved_account)
+        resolved_account, decks = await self._get_authenticated_deck_list(resolved_account)
 
         if resolved_account.user_id is None:
             raise RuntimeError("Archidekt authentication succeeded but did not resolve a user id.")
@@ -473,7 +503,7 @@ class DeckbuildingService:
 
     async def list_personal_decks(self, account: ArchidektAccount | None = None) -> PersonalDecksResponse:
         resolved_account = await self._coerce_account(account)
-        resolved_account, decks = await self.auth_client.list_personal_decks(resolved_account)
+        resolved_account, decks = await self._get_authenticated_deck_list(resolved_account)
         return self._build_personal_decks_response(resolved_account, decks)
 
     def _build_personal_decks_response(
@@ -740,7 +770,7 @@ class DeckbuildingService:
             affected_games.add(entry.game)
 
         await self._invalidate_collection_caches(resolved_account, affected_games)
-        self._mark_recent_collection_write(resolved_account, affected_games)
+        await self._mark_recent_collection_write(resolved_account, affected_games)
         return CollectionMutationResponse(
             action="upsert",
             account_username=resolved_account.username,
@@ -748,7 +778,7 @@ class DeckbuildingService:
             processed_at=datetime.now(UTC),
             notes=[
                 "Public and authenticated collection caches were invalidated for the affected game(s).",
-                "The next authenticated read of the same self collection will bypass cached snapshots once to reduce stale reads after this write.",
+                "Authenticated reads of the same self collection will bypass cached snapshots briefly after this write to reduce stale reads.",
                 "Use `search_archidekt_cards` or `search_owned_cards` to source Archidekt `card_id` values for later writes.",
             ],
             results=results,
@@ -765,7 +795,7 @@ class DeckbuildingService:
         affected_games = {entry.game for entry in entries if entry.game is not None} or {1, 2, 3}
 
         await self._invalidate_collection_caches(resolved_account, affected_games)
-        self._mark_recent_collection_write(resolved_account, affected_games)
+        await self._mark_recent_collection_write(resolved_account, affected_games)
         return CollectionMutationResponse(
             action="delete",
             account_username=resolved_account.username,
@@ -773,7 +803,7 @@ class DeckbuildingService:
             processed_at=datetime.now(UTC),
             notes=[
                 "Public and authenticated collection caches were invalidated for the affected game(s).",
-                "The next authenticated read of the same self collection will bypass cached snapshots once to reduce stale reads after this write.",
+                "Authenticated reads of the same self collection will bypass cached snapshots briefly after this write to reduce stale reads.",
                 "Use `search_owned_cards` to confirm that the deleted record ids no longer appear in the collection snapshot.",
             ],
             results=[

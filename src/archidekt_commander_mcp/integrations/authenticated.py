@@ -60,8 +60,6 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         if account.token and account.password is None:
             return AuthenticatedAccount(
                 token=account.token,
-                username=account.username,
-                user_id=account.user_id,
             )
 
         payload: dict[str, Any] = {"password": account.password}
@@ -96,13 +94,6 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         if not account.token:
             return await self.login(account)
 
-        if account.username or account.user_id is not None:
-            return AuthenticatedAccount(
-                token=account.token,
-                username=account.username,
-                user_id=account.user_id,
-            )
-
         recent_decks = await self._fetch_curated_self(account.token)
         inferred_username = recent_decks[0].owner_username if recent_decks else None
         inferred_user_id = recent_decks[0].owner_id if recent_decks else None
@@ -119,12 +110,17 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
     ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
         resolved = await self._coerce_account(account)
 
-        recent_decks = await self._fetch_curated_self(resolved.token)
-        if resolved.username is None and recent_decks:
+        recent_decks: list[PersonalDeckSummary] = []
+        if resolved.username is None or resolved.user_id is None:
+            resolved, recent_decks = await self._fetch_curated_self_for_account(resolved)
             resolved = resolved.model_copy(
                 update={
-                    "username": recent_decks[0].owner_username,
-                    "user_id": recent_decks[0].owner_id,
+                    "username": resolved.username or (recent_decks[0].owner_username if recent_decks else None),
+                    "user_id": (
+                        resolved.user_id
+                        if resolved.user_id is not None
+                        else (recent_decks[0].owner_id if recent_decks else None)
+                    ),
                 }
             )
 
@@ -572,8 +568,22 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
             headers=_auth_headers(token),
         )
         response.raise_for_status()
-        payload = response.json()
+        return self._map_curated_self_payload(response.json())
 
+    async def _fetch_curated_self_for_account(
+        self,
+        account: AuthenticatedAccount,
+    ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
+        resolved, response = await self._request_authenticated(
+            account,
+            "GET",
+            f"{self.settings.normalized_archidekt_base_url}/api/decks/curated/self/",
+            headers_factory=_auth_headers,
+        )
+        response.raise_for_status()
+        return resolved, self._map_curated_self_payload(response.json())
+
+    def _map_curated_self_payload(self, payload: Any) -> list[PersonalDeckSummary]:
         if isinstance(payload, dict):
             raw_results = payload.get("results") or payload.get("decks") or []
         elif isinstance(payload, list):

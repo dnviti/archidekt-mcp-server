@@ -46,7 +46,7 @@ Stateless rules:
 - For collection writes, provide `record_id` when updating an existing row; omitting `record_id` creates a new row.
 - Use `delete_collection_entries` with collection `record_id` values when removing cards from a collection row.
 - Reuse `archidekt_record_ids` returned by `search_owned_cards` for collection updates and deletes.
-- After an authenticated collection write, the next authenticated read of that same self collection will bypass cached snapshots once.
+- After an authenticated collection write, authenticated reads of that same self collection briefly bypass cached snapshots to reduce stale reads.
 
 Filter mapping:
 - Prefer `color_identity` for Commander logic.

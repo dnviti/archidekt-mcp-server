@@ -122,6 +122,8 @@ class HttpRouteTests(unittest.TestCase):
             route_paths,
             {
                 "/",
+                "/favicon.ico",
+                "/assets/{asset_name}",
                 "/health",
                 "/api/login",
                 "/api/personal-decks",
@@ -173,6 +175,20 @@ class HttpRouteTests(unittest.TestCase):
         response = client.get("/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
+
+    def test_static_webui_assets_are_served(self) -> None:
+        server = create_server(RuntimeSettings())
+        client = TestClient(server.streamable_http_app())
+
+        favicon = client.get("/favicon.ico")
+        logo = client.get("/assets/logo-generated.png")
+        missing = client.get("/assets/not-found.png")
+
+        self.assertEqual(favicon.status_code, 200)
+        self.assertEqual(favicon.headers["content-type"], "image/x-icon")
+        self.assertEqual(logo.status_code, 200)
+        self.assertEqual(logo.headers["content-type"], "image/png")
+        self.assertEqual(missing.status_code, 404)
 
     def test_trusted_proxy_headers_update_request_client_host(self) -> None:
         async def client_ip(request: Any) -> JSONResponse:
@@ -543,23 +559,28 @@ class RuntimeSettingsEnvTests(unittest.TestCase):
 
 
 class WebUiTests(unittest.TestCase):
-    def test_oauth_enabled_page_removes_manual_account_json_and_shows_oauth_controls(self) -> None:
+    def test_oauth_enabled_page_guides_nontechnical_deckbuilding_chatbot_flow(self) -> None:
         html = render_home_page(RuntimeSettings(auth_enabled=True))
         self.assertNotIn("Account JSON", html)
-        self.assertIn("Connect Archidekt", html)
-        self.assertIn("Test Auth Login", html)
+        self.assertNotIn("Test Auth Login", html)
+        self.assertNotIn("Filters JSON", html)
+        self.assertNotIn("API Test Result", html)
+        self.assertNotIn("window.localStorage", html)
+
+        self.assertIn("/favicon.ico", html)
+        self.assertIn("/assets/logo-generated.png", html)
+        self.assertIn("Your Archidekt Collection", html)
+        self.assertIn("What Do You Want To Build?", html)
+        self.assertIn("Connect Your Chatbot", html)
+        self.assertIn("ChatGPT", html)
+        self.assertIn("Claude", html)
+        self.assertIn("Copy This Request", html)
         self.assertIn('const authEnabled = true;', html)
-        self.assertIn("window.localStorage.getItem(oauthStorageKey)", html)
-        self.assertIn("function expiresAtFromSeconds(expiresInSeconds)", html)
-        self.assertIn("Deck writes may use `modifications.quantity` values greater than 1 when needed.", html)
-        self.assertIn("quantity belongs in `modifications.quantity`", html)
-        self.assertIn("provide `record_id` to update an existing row", html)
-        self.assertIn("Use `delete_collection_entries` with `archidekt_record_ids`", html)
-        self.assertIn("non-basic cards should normally stay at 4 copies or fewer", html)
-        self.assertIn("sort_by: unit_price", html)
-        self.assertIn("sort_direction: desc", html)
-        self.assertIn("window.localStorage", html)
-        self.assertNotIn("payload.expires_in || 3600", html)
+        self.assertIn("new URL(mcpPath, window.location.origin)", html)
+        self.assertIn("function buildDeckBrief()", html)
+        self.assertIn("Private Archidekt sign-in is available when your chatbot connects", html)
+        self.assertIn("For Commander, use more than 1 copy only for basic lands.", html)
+        self.assertIn("wait for my explicit confirmation", html)
 
     def test_server_instructions_explain_quantity_rules(self) -> None:
         self.assertIn("Collection quantities may be any positive integer.", SERVER_INSTRUCTIONS)

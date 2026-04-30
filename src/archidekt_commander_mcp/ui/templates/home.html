@@ -1,10 +1,13 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Archidekt MCP Server</title>
+  <title>Archidekt Commander Assistant</title>
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png" />
+  <link rel="apple-touch-icon" href="/assets/favicon-192.png" />
   <script>
     (() => {{
       const params = new URLSearchParams(window.location.search);
@@ -26,828 +29,1061 @@
         console.error("Failed to notify opener about OAuth callback.", error);
       }}
       window.addEventListener("DOMContentLoaded", () => {{
-        document.body.innerHTML = '<main style="min-height:100vh;display:grid;place-items:center;font-family:Segoe UI,Helvetica Neue,sans-serif;background:#f7f3e8;color:#14281d;">Completing sign-in...</main>';
+        document.body.innerHTML = '<main class="callback-screen">Completing Archidekt sign-in...</main>';
       }});
       setTimeout(() => window.close(), 80);
     }})();
   </script>
   <style>
     :root {{
-      --ink: #14281d;
-      --forest: #29524a;
-      --sand: #f7f3e8;
-      --paper: #fffdf8;
-      --gold: #d9a441;
-      --line: rgba(20, 40, 29, 0.14);
-      --muted: #5f6e63;
-      --shadow: 0 22px 60px rgba(20, 40, 29, 0.12);
-      --radius: 22px;
+      --page: #eef0ed;
+      --paper: #ffffff;
+      --panel: #f7f8f6;
+      --ink: #202725;
+      --muted: #626d68;
+      --soft: #dce1dd;
+      --line: #cbd2cd;
+      --line-strong: #aab5ae;
+      --nav: #17221f;
+      --nav-2: #24342f;
+      --green: #376a59;
+      --green-dark: #24483d;
+      --gold: #d5a542;
+      --gold-soft: #f2dfac;
+      --red: #9d3b32;
+      --blue: #3d657b;
+      --shadow: 0 14px 34px rgba(23, 34, 31, 0.12);
+      --radius: 6px;
     }}
 
     * {{
       box-sizing: border-box;
     }}
 
+    html {{
+      background: var(--page);
+    }}
+
     body {{
       margin: 0;
-      font-family: "Segoe UI", "Helvetica Neue", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at top left, rgba(217, 164, 65, 0.18), transparent 28rem),
-        linear-gradient(135deg, #efe8d4 0%, #f8f4ea 42%, #eef5ee 100%);
+        linear-gradient(180deg, rgba(23, 34, 31, 0.06), transparent 220px),
+        var(--page);
+      font-family: "Trebuchet MS", "Segoe UI", Verdana, sans-serif;
       min-height: 100vh;
     }}
 
+    button,
+    input,
+    select,
+    textarea {{
+      font: inherit;
+    }}
+
+    button,
+    a {{
+      -webkit-tap-highlight-color: transparent;
+    }}
+
+    .callback-screen {{
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      color: var(--paper);
+      background: var(--nav);
+    }}
+
+    .topbar {{
+      background: var(--nav);
+      color: #f7f3e6;
+      border-bottom: 4px solid var(--gold);
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.2);
+    }}
+
+    .topbar-inner {{
+      width: min(1240px, calc(100vw - 24px));
+      margin: 0 auto;
+      min-height: 62px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }}
+
+    .brand {{
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }}
+
+    .brand img {{
+      width: 42px;
+      height: 42px;
+      border-radius: 6px;
+      box-shadow: 0 0 0 1px rgba(245, 238, 210, 0.18);
+      flex: 0 0 auto;
+    }}
+
+    .brand-title {{
+      display: grid;
+      gap: 1px;
+      min-width: 0;
+    }}
+
+    .brand-title strong {{
+      font-size: 1rem;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+
+    .brand-title span {{
+      color: #c8d0cc;
+      font-size: 0.78rem;
+    }}
+
+    .nav-links {{
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }}
+
+    .nav-links a {{
+      color: #e8e2cf;
+      text-decoration: none;
+      border: 1px solid rgba(232, 226, 207, 0.18);
+      border-radius: 4px;
+      padding: 7px 10px;
+      font-size: 0.86rem;
+      background: rgba(255, 255, 255, 0.05);
+    }}
+
+    .nav-links a:hover {{
+      background: rgba(255, 255, 255, 0.1);
+    }}
+
     .shell {{
-      width: min(1180px, calc(100vw - 2rem));
-      margin: 1rem auto 2rem;
+      width: min(1240px, calc(100vw - 24px));
+      margin: 18px auto 32px;
+      display: grid;
+      gap: 14px;
     }}
 
     .hero {{
-      background: linear-gradient(145deg, rgba(20, 40, 29, 0.96), rgba(41, 82, 74, 0.96));
-      color: #f8f4ea;
-      padding: 1.5rem;
-      border-radius: calc(var(--radius) + 4px);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 14px;
+      align-items: stretch;
+    }}
+
+    .hero-main,
+    .hero-side,
+    .panel {{
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
       box-shadow: var(--shadow);
+    }}
+
+    .hero-main {{
+      padding: 18px;
+      display: grid;
+      gap: 16px;
       position: relative;
       overflow: hidden;
     }}
 
-    .hero::after {{
+    .hero-main::after {{
       content: "";
       position: absolute;
-      inset: auto -5rem -5rem auto;
-      width: 18rem;
-      height: 18rem;
-      background: radial-gradient(circle, rgba(217, 164, 65, 0.28), transparent 65%);
+      inset: 0 0 auto auto;
+      width: 260px;
+      height: 100%;
+      background:
+        linear-gradient(90deg, transparent, rgba(55, 106, 89, 0.08)),
+        repeating-linear-gradient(135deg, transparent 0 12px, rgba(213, 165, 66, 0.12) 12px 13px);
       pointer-events: none;
     }}
 
     .eyebrow {{
+      color: var(--green);
       text-transform: uppercase;
-      letter-spacing: 0.16em;
-      font-size: 0.74rem;
-      color: rgba(248, 244, 234, 0.76);
-      margin-bottom: 0.7rem;
+      letter-spacing: 0.08em;
+      font-size: 0.76rem;
+      font-weight: 700;
+    }}
+
+    h1,
+    h2,
+    h3,
+    p {{
+      margin: 0;
     }}
 
     h1 {{
-      margin: 0;
-      font-size: clamp(2rem, 4vw, 3.5rem);
-      line-height: 0.98;
-      max-width: 11ch;
+      max-width: 760px;
+      font-size: clamp(1.85rem, 3.2vw, 3.2rem);
+      line-height: 1.02;
+      letter-spacing: 0;
+      position: relative;
+      z-index: 1;
     }}
 
-    .hero p {{
-      margin: 1rem 0 0;
-      max-width: 68ch;
-      color: rgba(248, 244, 234, 0.84);
-      line-height: 1.55;
+    .hero-main p {{
+      color: var(--muted);
+      line-height: 1.5;
+      max-width: 780px;
+      position: relative;
+      z-index: 1;
     }}
 
-    .badges {{
+    .hero-actions,
+    .actions,
+    .tabs,
+    .chips {{
       display: flex;
       flex-wrap: wrap;
-      gap: 0.7rem;
-      margin-top: 1.1rem;
+      gap: 8px;
+      align-items: center;
     }}
 
-    .badge {{
-      border: 1px solid rgba(248, 244, 234, 0.18);
-      background: rgba(255, 255, 255, 0.08);
-      color: #fff8e7;
-      padding: 0.55rem 0.8rem;
-      border-radius: 999px;
-      font-size: 0.92rem;
-    }}
-
-    .grid {{
+    .hero-side {{
+      padding: 14px;
+      background: linear-gradient(180deg, #ffffff, #f3f5f2);
       display: grid;
-      grid-template-columns: 1.05fr 0.95fr;
-      gap: 1rem;
-      margin-top: 1rem;
+      gap: 10px;
+    }}
+
+    .mini-card-stack {{
+      min-height: 178px;
+      position: relative;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(135deg, rgba(23, 34, 31, 0.9), rgba(43, 68, 60, 0.95)),
+        radial-gradient(circle at 60% 28%, rgba(213, 165, 66, 0.34), transparent 28%);
+      overflow: hidden;
+    }}
+
+    .mini-card {{
+      position: absolute;
+      width: 118px;
+      height: 164px;
+      border-radius: 8px;
+      background: #f8f1db;
+      border: 5px solid #e5c970;
+      box-shadow: 0 12px 24px rgba(0, 0, 0, 0.24);
+    }}
+
+    .mini-card:nth-child(1) {{
+      left: 38px;
+      top: 20px;
+      transform: rotate(-10deg);
+      background: linear-gradient(180deg, #284439, #15231e);
+    }}
+
+    .mini-card:nth-child(2) {{
+      left: 82px;
+      top: 14px;
+      transform: rotate(3deg);
+      background: linear-gradient(180deg, #385f50, #16231f);
+    }}
+
+    .mini-card:nth-child(3) {{
+      right: 34px;
+      top: 24px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.78), transparent 28%),
+        linear-gradient(180deg, #335f50, #16231f);
+    }}
+
+    .mini-pip {{
+      position: absolute;
+      inset: 44px 28px auto auto;
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      background: var(--gold);
+      display: grid;
+      place-items: center;
+      color: var(--nav);
+      font-weight: 900;
+      z-index: 2;
+    }}
+
+    .library-preview {{
+      display: grid;
+      gap: 8px;
+    }}
+
+    .deck-row {{
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      gap: 9px;
+      align-items: center;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--panel);
+    }}
+
+    .deck-icon {{
+      width: 34px;
+      height: 48px;
+      border-radius: 4px;
+      border: 3px solid #dac56d;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.65), transparent 34%),
+        linear-gradient(145deg, var(--green), var(--nav));
+    }}
+
+    .deck-row strong {{
+      display: block;
+      color: #2e3934;
+      font-size: 0.92rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+
+    .deck-row span {{
+      color: var(--muted);
+      font-size: 0.8rem;
+    }}
+
+    .count-pill {{
+      border-radius: 999px;
+      background: #e5f0ea;
+      color: var(--green-dark);
+      border: 1px solid #bdd2c7;
+      padding: 4px 8px;
+      font-size: 0.78rem;
+      font-weight: 800;
+      white-space: nowrap;
+    }}
+
+    .count-pill.gold {{
+      background: #fff4cc;
+      color: #634b11;
+      border-color: #e9d48d;
+    }}
+
+    .layout {{
+      display: grid;
+      grid-template-columns: minmax(0, 1.02fr) minmax(360px, 0.98fr);
+      gap: 14px;
+      align-items: start;
     }}
 
     .panel {{
-      background: rgba(255, 253, 248, 0.92);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      padding: 1.1rem;
-      backdrop-filter: blur(8px);
-    }}
-
-    .panel h2 {{
-      margin: 0 0 0.7rem;
-      font-size: 1.2rem;
-    }}
-
-    .panel p,
-    .hint,
-    .meta {{
-      color: var(--muted);
-      line-height: 1.5;
-    }}
-
-    .stack {{
+      padding: 14px;
       display: grid;
-      gap: 0.9rem;
+      gap: 12px;
     }}
 
-    .two-col {{
+    .panel-header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }}
+
+    .panel-header h2 {{
+      font-size: 1.12rem;
+    }}
+
+    .panel-header p,
+    .muted {{
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 0.92rem;
+    }}
+
+    .step {{
+      display: inline-grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--green);
+      color: #fff;
+      font-weight: 800;
+      font-size: 0.9rem;
+      flex: 0 0 auto;
+    }}
+
+    .form-grid {{
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.8rem;
+      gap: 10px;
     }}
 
-    label {{
+    .field {{
       display: grid;
-      gap: 0.35rem;
-      font-size: 0.92rem;
-      font-weight: 600;
+      gap: 5px;
+    }}
+
+    .field.full {{
+      grid-column: 1 / -1;
+    }}
+
+    label,
+    .label {{
+      color: #34403b;
+      font-size: 0.84rem;
+      font-weight: 700;
     }}
 
     input,
-    textarea,
     select,
-    button {{
-      font: inherit;
-    }}
-
-    input,
-    textarea,
-    select {{
+    textarea {{
       width: 100%;
-      padding: 0.82rem 0.92rem;
-      border-radius: 14px;
-      border: 1px solid rgba(20, 40, 29, 0.16);
-      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+      background: #fff;
       color: var(--ink);
+      padding: 9px 10px;
+      outline: none;
+      transition: border-color 120ms ease, box-shadow 120ms ease;
     }}
 
     textarea {{
-      min-height: 8rem;
+      min-height: 104px;
       resize: vertical;
+      line-height: 1.45;
     }}
 
-    .actions {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem;
+    input:focus,
+    select:focus,
+    textarea:focus {{
+      border-color: var(--green);
+      box-shadow: 0 0 0 3px rgba(55, 106, 89, 0.14);
     }}
 
-    button {{
-      border: 0;
-      border-radius: 999px;
-      padding: 0.82rem 1rem;
-      cursor: pointer;
-      transition: transform 140ms ease, opacity 140ms ease, box-shadow 140ms ease;
-    }}
-
-    button:hover {{
-      transform: translateY(-1px);
-      box-shadow: 0 10px 28px rgba(20, 40, 29, 0.12);
-    }}
-
-    .primary {{
-      background: var(--forest);
-      color: #fffaf0;
-    }}
-
-    .secondary {{
-      background: rgba(20, 40, 29, 0.08);
-      color: var(--ink);
-    }}
-
-    .accent {{
-      background: var(--gold);
-      color: #2a1e08;
-    }}
-
-    .copy-button {{
-      padding: 0.55rem 0.8rem;
-      background: rgba(20, 40, 29, 0.08);
-      color: var(--ink);
-      font-size: 0.84rem;
-    }}
-
-    .code-card {{
+    .option-row {{
       display: grid;
-      gap: 0.55rem;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--panel);
+      color: var(--muted);
+      line-height: 1.35;
+      font-size: 0.9rem;
     }}
 
-    .code-header {{
-      display: flex;
+    .option-row input {{
+      width: 16px;
+      height: 16px;
+      margin: 2px 0 0;
+      accent-color: var(--green);
+    }}
+
+    .button {{
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 9px 12px;
+      cursor: pointer;
+      font-weight: 800;
+      transition: transform 100ms ease, box-shadow 100ms ease, background 100ms ease;
+      text-decoration: none;
+      display: inline-flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 0.8rem;
+      justify-content: center;
+      gap: 6px;
     }}
 
-    .code-header h2 {{
+    .button:hover {{
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(23, 34, 31, 0.13);
+    }}
+
+    .button.primary {{
+      background: var(--green);
+      color: #fff;
+    }}
+
+    .button.gold {{
+      background: var(--gold);
+      color: #211b0b;
+    }}
+
+    .button.secondary {{
+      background: #eef2ef;
+      color: var(--green-dark);
+      border-color: var(--line);
+    }}
+
+    .tab {{
+      background: #eef2ef;
+      color: var(--green-dark);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-weight: 800;
+      cursor: pointer;
+    }}
+
+    .tab.active {{
+      background: var(--green);
+      color: #fff;
+      border-color: var(--green);
+    }}
+
+    .guide {{
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, #fff, #f7f8f6);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }}
+
+    .guide h3 {{
+      font-size: 1rem;
+    }}
+
+    .guide ol {{
       margin: 0;
+      padding-left: 1.25rem;
+      color: var(--muted);
+      line-height: 1.45;
+      display: grid;
+      gap: 5px;
+    }}
+
+    .guide a {{
+      color: var(--green-dark);
+      font-weight: 800;
+    }}
+
+    .server-url {{
+      display: grid;
+      gap: 7px;
+      padding: 10px;
+      border-radius: 4px;
+      border: 1px solid #b8c8bf;
+      background: #edf5f0;
+    }}
+
+    .url-row {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+    }}
+
+    .url-row code,
+    pre {{
+      font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    }}
+
+    .url-row code {{
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 8px 9px;
+      color: var(--green-dark);
+    }}
+
+    .notice {{
+      border-radius: 4px;
+      border: 1px solid #e3c77b;
+      background: #fff7dd;
+      color: #5e4615;
+      padding: 9px 10px;
+      line-height: 1.4;
+      font-size: 0.9rem;
+    }}
+
+    .notice.hidden {{
+      display: none;
+    }}
+
+    .chip {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 3px 9px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 700;
+    }}
+
+    .chip.green {{
+      background: #e5f0ea;
+      color: var(--green-dark);
+      border-color: #bdd2c7;
+    }}
+
+    .chip.gold {{
+      background: #fff4cc;
+      color: #634b11;
+      border-color: #e9d48d;
+    }}
+
+    .deck-ideas {{
+      display: grid;
+      gap: 8px;
+    }}
+
+    .idea-row {{
+      display: grid;
+      grid-template-columns: 72px minmax(0, 1fr);
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--panel);
+      cursor: pointer;
+    }}
+
+    .idea-row:hover {{
+      border-color: var(--green);
+      background: #f3f7f4;
+    }}
+
+    .idea-thumb {{
+      height: 96px;
+      border-radius: 6px;
+      border: 4px solid #dbc36f;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.75), transparent 28%),
+        linear-gradient(145deg, var(--green), var(--nav));
+      position: relative;
+      overflow: hidden;
+    }}
+
+    .idea-thumb::after {{
+      content: "";
+      position: absolute;
+      inset: auto 13px 16px;
+      height: 28px;
+      border-radius: 50% 50% 4px 4px;
+      background: var(--gold);
+    }}
+
+    .idea-row h3 {{
+      margin-bottom: 4px;
+      font-size: 0.98rem;
+    }}
+
+    .idea-row p {{
+      color: var(--muted);
+      line-height: 1.35;
+      font-size: 0.88rem;
+    }}
+
+    .output-card {{
+      display: grid;
+      gap: 10px;
+    }}
+
+    .output-header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
     }}
 
     pre {{
       margin: 0;
-      padding: 1rem;
-      border-radius: 18px;
-      background: #191f1b;
-      color: #f5f6ef;
+      min-height: 260px;
+      max-height: 520px;
       overflow: auto;
       white-space: pre-wrap;
       word-break: break-word;
-      line-height: 1.45;
-    }}
-
-    .small {{
+      background: #18211e;
+      color: #f3f0df;
+      border: 1px solid #0f1815;
+      border-radius: var(--radius);
+      padding: 12px;
+      line-height: 1.48;
       font-size: 0.88rem;
     }}
 
     .status {{
-      min-height: 1.4rem;
-      color: var(--forest);
-      font-weight: 600;
+      min-height: 22px;
+      color: var(--green-dark);
+      font-weight: 800;
+      font-size: 0.9rem;
     }}
 
-    .auth-row {{
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.8rem;
-      padding: 0.9rem 1rem;
-      border-radius: 18px;
-      border: 1px solid rgba(20, 40, 29, 0.12);
-      background: rgba(255, 255, 255, 0.72);
+    details {{
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 10px;
     }}
 
-    .auth-state {{
-      font-weight: 600;
-      color: var(--ink);
+    summary {{
+      cursor: pointer;
+      font-weight: 800;
+      color: var(--green-dark);
     }}
 
-    .auth-state.connected {{
-      color: var(--forest);
+    .advanced-body {{
+      margin-top: 10px;
+      display: grid;
+      gap: 8px;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 0.9rem;
     }}
 
-    button:disabled {{
-      cursor: not-allowed;
-      opacity: 0.55;
-      transform: none;
-      box-shadow: none;
-    }}
-
-    @media (max-width: 920px) {{
-      .grid,
-      .two-col {{
+    @media (max-width: 980px) {{
+      .hero,
+      .layout {{
         grid-template-columns: 1fr;
       }}
 
-      .shell {{
-        width: min(100vw - 1rem, 100%);
+      .hero-side {{
+        order: -1;
+      }}
+    }}
+
+    @media (max-width: 720px) {{
+      .topbar-inner {{
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 10px 0;
       }}
 
-      .code-header {{
-        flex-direction: column;
-        align-items: flex-start;
+      .nav-links {{
+        justify-content: flex-start;
+      }}
+
+      .form-grid,
+      .url-row {{
+        grid-template-columns: 1fr;
+      }}
+
+      .hero-main {{
+        padding: 14px;
+      }}
+
+      .idea-row {{
+        grid-template-columns: 58px minmax(0, 1fr);
+      }}
+
+      .idea-thumb {{
+        height: 82px;
       }}
     }}
   </style>
 </head>
 <body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <img src="/assets/logo-generated.png" alt="Archidekt Commander Assistant logo" />
+        <div class="brand-title">
+          <strong>Archidekt Commander Assistant</strong>
+          <span>Build decks from your collection in ChatGPT, Claude, or another AI assistant</span>
+        </div>
+      </div>
+      <nav class="nav-links" aria-label="Page sections">
+        <a href="#collection">Your Collection</a>
+        <a href="#request">Deck Goal</a>
+        <a href="#chatbot">Chatbot</a>
+      </nav>
+    </div>
+  </header>
+
   <main class="shell">
     <section class="hero">
-      <div class="eyebrow">Stateless Deckbuilding MCP</div>
-      <h1>Archidekt Commander Web UI</h1>
-      <p>
-        Stateless by default, with optional authenticated Archidekt access for private collections
-        and personal deck overlap checks, MCP OAuth sign-in for ChatGPT, and authenticated deck or collection writes.
-        This page can also connect through OAuth directly so authenticated users can test private API routes with their own Archidekt account.
-      </p>
-      <div class="badges">
-        <div class="badge">MCP Endpoint: {mcp_path}</div>
-        <div class="badge">Transport: {transport}</div>
-        <div class="badge">Redis TTL: {cache_ttl}s</div>
-        <div class="badge">Stateless HTTP: {stateless_http}</div>
-      </div>
+      <article class="hero-main">
+        <div class="eyebrow">Archidekt collection deckbuilding</div>
+        <h1>Turn your owned cards into a clear deck request for your favorite chatbot.</h1>
+        <p>
+          Pick your collection, describe the Commander deck you want, and copy a request that tells
+          the chatbot how to search owned cards, suggest upgrades, check deck overlap, and wait for
+          your confirmation before changing anything in Archidekt.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="#collection">Start deck request</a>
+          <a class="button secondary" href="#chatbot">Connect a chatbot</a>
+          <span class="chip green" id="auth-mode-chip">Checking sign-in mode...</span>
+        </div>
+      </article>
+      <aside class="hero-side" aria-label="Service summary">
+        <div class="mini-card-stack" aria-hidden="true">
+          <div class="mini-card"></div>
+          <div class="mini-card"></div>
+          <div class="mini-card"></div>
+          <div class="mini-pip">AI</div>
+        </div>
+        <div class="library-preview">
+          <div class="deck-row">
+            <div class="deck-icon"></div>
+            <div>
+              <strong>Owned-card brew</strong>
+              <span>Start from cards already in your collection</span>
+            </div>
+            <div class="count-pill">100 cards</div>
+          </div>
+          <div class="deck-row">
+            <div class="deck-icon"></div>
+            <div>
+              <strong>Upgrade pass</strong>
+              <span>Separate owned swaps from missing upgrades</span>
+            </div>
+            <div class="count-pill">Budget</div>
+          </div>
+          <div class="deck-row">
+            <div class="deck-icon"></div>
+            <div>
+              <strong>Archidekt sign-in</strong>
+              <span id="auth-mode-label">Checking...</span>
+            </div>
+            <div class="count-pill" id="auth-count-pill">Private</div>
+          </div>
+        </div>
+      </aside>
     </section>
 
-    <section class="grid">
-      <article class="panel">
-        <h2>Collection Context</h2>
-        <p class="hint">
-          Provide exactly one of collection ID, public collection URL, or Archidekt username.
-          This object must be passed in every collection-related MCP tool call. Private deck access,
-          private collection access, and account writes come from the OAuth session instead of pasted credentials.
-        </p>
-        <div class="stack">
-          <div class="auth-row">
-            <div>
-              <div class="auth-state" id="auth-state">OAuth not connected.</div>
-              <div class="meta small" id="auth-meta">Connect Archidekt to test private account routes from this page.</div>
-            </div>
-            <div class="actions">
-              <button class="secondary" id="connect-auth">Connect Archidekt</button>
-              <button class="secondary" id="disconnect-auth">Disconnect</button>
-            </div>
+    <section class="layout">
+      <div class="panel" id="collection">
+        <div class="panel-header">
+          <span class="step">1</span>
+          <div>
+            <h2>Your Archidekt Collection</h2>
+            <p>Choose the easiest identifier you know. A username is usually enough for public collections.</p>
           </div>
+        </div>
 
-          <div class="two-col">
-            <label>
-              Collection ID
-              <input id="collection-id" placeholder="548188" />
-            </label>
-            <label>
-              Game
-              <select id="game">
-                <option value="1">1 · Paper</option>
-                <option value="2">2 · MTGO</option>
-                <option value="3">3 · Arena</option>
-              </select>
-            </label>
+        <div class="form-grid">
+          <div class="field">
+            <label for="username">Archidekt username</label>
+            <input id="username" placeholder="your_username" autocomplete="off" />
           </div>
-
-          <label>
-            Collection URL
+          <div class="field">
+            <label for="game">Collection type</label>
+            <select id="game">
+              <option value="1">Paper</option>
+              <option value="2">MTGO</option>
+              <option value="3">Arena</option>
+            </select>
+          </div>
+          <div class="field full">
+            <label for="collection-url">Collection link</label>
             <input id="collection-url" placeholder="https://archidekt.com/collection/v2/548188" />
-          </label>
-
-          <label>
-            Archidekt Username
-            <input id="username" placeholder="your_username" />
-          </label>
-
-          <label>
-            User Prompt To Send To The LLM
-            <textarea id="prompt" placeholder="Build me an owned blue instant package for a Commander control deck."></textarea>
-          </label>
-
-          <label>
-            Filters JSON For Quick API Testing
-            <textarea id="filters">{default_filters}</textarea>
-          </label>
-
-          <div class="actions">
-            <button class="primary" id="build-context">Generate LLM Context</button>
-            <button class="secondary" id="test-login">Test Auth Login</button>
-            <button class="secondary" id="test-personal-decks">Test Personal Decks</button>
-            <button class="secondary" id="test-overview">Test Overview</button>
-            <button class="secondary" id="test-owned">Test Owned</button>
-            <button class="accent" id="test-unowned">Test Unowned</button>
           </div>
-          <p class="meta small">
-            When OAuth is connected, the authenticated test buttons use your own Archidekt account through bearer auth.
-            Public collection tests also reuse that session automatically when it is present.
-          </p>
-          <p class="meta small">
-            Additional authenticated write routes are available at
-            `/api/cards/search`, `/api/personal-deck-cards`, `/api/personal-decks/create`,
-            `/api/personal-decks/update`, `/api/personal-decks/delete`,
-            `/api/personal-decks/modify-cards`, and `/api/collection/upsert`.
-          </p>
-          <div class="status" id="status"></div>
+          <div class="field full">
+            <label for="collection-id">Collection ID</label>
+            <input id="collection-id" placeholder="548188" inputmode="numeric" />
+          </div>
         </div>
-      </article>
 
-      <article class="panel stack">
-        <div class="code-card">
-          <div class="code-header">
+        <div class="panel-header" id="request">
+          <span class="step">2</span>
+          <div>
+            <h2>What Do You Want To Build?</h2>
+            <p>Describe the deck in normal language. The generated prompt will tell the chatbot how to use the tools safely.</p>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="field">
+            <label for="deck-mode">Deckbuilding goal</label>
+            <select id="deck-mode">
+              <option value="Build a new Commander deck">Build a new Commander deck</option>
+              <option value="Upgrade an existing deck">Upgrade an existing deck</option>
+              <option value="Find missing upgrades">Find missing upgrades</option>
+              <option value="Tune a collection-only deck">Tune a collection-only deck</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="power-level">Power target</label>
+            <select id="power-level">
+              <option value="Casual">Casual</option>
+              <option value="Precon-plus">Precon-plus</option>
+              <option value="Focused">Focused</option>
+              <option value="High power">High power</option>
+              <option value="cEDH">cEDH</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="commander">Commander, colors, or theme</label>
+            <input id="commander" placeholder="Muldrotha graveyard value, Bant tokens..." />
+          </div>
+          <div class="field">
+            <label for="budget">Budget or price limit</label>
+            <input id="budget" placeholder="$50 upgrade, no card over $10..." />
+          </div>
+          <div class="field full">
+            <label for="deck-link">Existing deck link, if any</label>
+            <input id="deck-link" placeholder="https://archidekt.com/decks/..." />
+          </div>
+          <div class="field full">
+            <label for="prompt">Your request</label>
+            <textarea id="prompt" placeholder="Build me a graveyard Commander deck from cards I own, then suggest the best missing upgrades under $5 each."></textarea>
+          </div>
+          <div class="field full">
+            <label class="option-row">
+              <input id="owned-only" type="checkbox" checked />
+              <span>Prefer cards I already own. If a card is already used in another personal deck, ask before reusing it.</span>
+            </label>
+            <label class="option-row">
+              <input id="allow-writes" type="checkbox" />
+              <span>After showing me the plan, the chatbot may create or update my Archidekt deck only after I explicitly confirm.</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="deck-ideas" aria-label="Quick deck request examples">
+          <div class="idea-row" data-example="collection">
+            <div class="idea-thumb"></div>
             <div>
-              <h2>Collection JSON</h2>
-              <p class="meta small">Pass this in every MCP call instead of relying on previous state.</p>
+              <h3>Collection-only brew</h3>
+              <p>Use owned cards first, check free copies, and replace cards already committed to other decks.</p>
+              <div class="chips"><span class="chip green">Owned cards</span><span class="chip">Commander</span></div>
             </div>
-            <button class="copy-button" data-copy-target="collection-json">Copy JSON</button>
           </div>
-          <pre id="collection-json"></pre>
+          <div class="idea-row" data-example="upgrade">
+            <div class="idea-thumb"></div>
+            <div>
+              <h3>Budget upgrade pass</h3>
+              <p>Keep the deck's identity, suggest low-cost upgrades, and explain what each swap improves.</p>
+              <div class="chips"><span class="chip gold">Budget</span><span class="chip">Upgrade</span></div>
+            </div>
+          </div>
+          <div class="idea-row" data-example="missing">
+            <div class="idea-thumb"></div>
+            <div>
+              <h3>Find missing staples</h3>
+              <p>Search Scryfall for cards not in the collection, sorted by price, EDHREC rank, or role.</p>
+              <div class="chips"><span class="chip">Unowned</span><span class="chip">Shopping list</span></div>
+            </div>
+          </div>
         </div>
 
-        <div class="code-card">
-          <div class="code-header">
-            <div>
-              <h2>LLM Instructions</h2>
-              <p class="meta small">Copy this block into the active prompt for the current request.</p>
-            </div>
-            <button class="copy-button" data-copy-target="llm-instructions">Copy Instructions</button>
+        <div class="actions">
+          <button class="button primary" id="build-brief">Create deckbuilding brief</button>
+          <button class="button secondary" id="reset-form">Reset</button>
+        </div>
+        <div class="status" id="status"></div>
+      </div>
+
+      <aside class="panel" id="chatbot">
+        <div class="panel-header">
+          <span class="step">3</span>
+          <div>
+            <h2>Connect Your Chatbot</h2>
+            <p>Pick the chatbot you use, copy the URL, then add this page as a custom connector.</p>
           </div>
-          <pre id="llm-instructions"></pre>
         </div>
 
-        <div class="code-card">
-          <div class="code-header">
-            <div>
-              <h2>API Test Result</h2>
-              <p class="meta small">These HTTP endpoints run the same logic used by the MCP tools. When this page is connected through OAuth, private account flows reuse the page's authenticated Archidekt session.</p>
-            </div>
-            <button class="copy-button" data-copy-target="result">Copy Result</button>
+        <div class="server-url">
+          <div class="label">Chatbot connection URL</div>
+          <div class="url-row">
+            <code id="server-url"></code>
+            <button class="button secondary" data-copy-target="server-url">Copy URL</button>
           </div>
-          <pre id="result">Use one of the test buttons to run a stateless request.</pre>
+          <div class="notice hidden" id="local-warning">
+            This is a local address. Ask the person hosting this page for the public HTTPS URL before connecting ChatGPT or Claude.
+          </div>
         </div>
-      </article>
+
+        <div class="tabs" role="tablist" aria-label="Chatbot guides">
+          <button class="tab active" data-chatbot="chatgpt" type="button">ChatGPT</button>
+          <button class="tab" data-chatbot="claude" type="button">Claude</button>
+          <button class="tab" data-chatbot="other" type="button">Other apps</button>
+        </div>
+
+        <div class="guide" id="chatbot-guide"></div>
+
+        <div class="output-card">
+          <div class="output-header">
+            <div>
+              <h2>Copy This Request</h2>
+              <p class="muted">Paste this into your chatbot after the connector is enabled.</p>
+            </div>
+            <button class="button gold" data-copy-target="deck-brief">Copy Request</button>
+          </div>
+          <pre id="deck-brief"></pre>
+        </div>
+
+        <details>
+          <summary>For the person hosting this page</summary>
+          <div class="advanced-body">
+            <p>Cloud chatbots must reach the server from the public internet. If this URL starts with localhost or 127.0.0.1, deploy the server behind HTTPS before sharing it with non-technical users.</p>
+            <p>Connector path: <strong>{mcp_path}</strong>. Transport: <strong>{transport}</strong>. Public collection cache: <strong>{cache_ttl}s</strong>. Stateless HTTP: <strong>{stateless_http}</strong>.</p>
+            <p>Private collections, personal decks, and deck writes require OAuth to be enabled on the server. Public collection browsing works without sign-in.</p>
+          </div>
+        </details>
+      </aside>
     </section>
   </main>
 
   <script>
-    const collectionJsonEl = document.getElementById("collection-json");
-    const instructionsEl = document.getElementById("llm-instructions");
-    const resultEl = document.getElementById("result");
-    const statusEl = document.getElementById("status");
-    const authStateEl = document.getElementById("auth-state");
-    const authMetaEl = document.getElementById("auth-meta");
-    const connectButton = document.getElementById("connect-auth");
-    const disconnectButton = document.getElementById("disconnect-auth");
-    const testLoginButton = document.getElementById("test-login");
-    const testPersonalDecksButton = document.getElementById("test-personal-decks");
     const authEnabled = {auth_enabled};
-    const oauthScope = {oauth_scope};
     const mcpPath = {mcp_path_json};
-    const oauthStorageKey = "archidekt-webui-oauth-session";
+    const serverUrlEl = document.getElementById("server-url");
+    const deckBriefEl = document.getElementById("deck-brief");
+    const chatbotGuideEl = document.getElementById("chatbot-guide");
+    const statusEl = document.getElementById("status");
+    const authModeChip = document.getElementById("auth-mode-chip");
+    const authModeLabel = document.getElementById("auth-mode-label");
+    const authCountPill = document.getElementById("auth-count-pill");
+    const localWarning = document.getElementById("local-warning");
+    let selectedChatbot = "chatgpt";
+
+    const examples = {{
+      collection: {{
+        mode: "Tune a collection-only deck",
+        power: "Focused",
+        commander: "A Commander deck using only cards already in my Archidekt collection",
+        budget: "No new purchases unless there is no owned replacement",
+        prompt: "Build a complete Commander list from my owned cards. Check whether important cards are already used in my personal decks, and replace anything with no free copies.",
+        ownedOnly: true,
+        allowWrites: false,
+      }},
+      upgrade: {{
+        mode: "Upgrade an existing deck",
+        power: "Precon-plus",
+        commander: "Keep the deck's current commander and theme",
+        budget: "$50 total upgrade budget, avoid cards over $10",
+        prompt: "Upgrade this deck while keeping its original game plan. Show the best cuts and additions, explain each swap, and separate owned upgrades from missing cards.",
+        ownedOnly: false,
+        allowWrites: false,
+      }},
+      missing: {{
+        mode: "Find missing upgrades",
+        power: "Focused",
+        commander: "Commander staples that fit my deck colors and theme",
+        budget: "Sort by cheapest useful upgrades first",
+        prompt: "Find cards I do not own that would improve ramp, draw, removal, and finishers. Prioritize Commander-legal cards and include budget alternatives.",
+        ownedOnly: false,
+        allowWrites: false,
+      }},
+    }};
 
     function cleanValue(value) {{
       const trimmed = value.trim();
       return trimmed.length ? trimmed : null;
     }}
 
-    function oauthExpiryTimestamp(expiresIn) {{
-      const numeric = Number(expiresIn);
-      if (!Number.isFinite(numeric) || numeric <= 0) {{
-        return null;
-      }}
-      return Date.now() + (numeric * 1000);
-    }}
-
-    function encodeFormBody(values) {{
-      return new URLSearchParams(values).toString();
-    }}
-
-    function readStoredSession() {{
-      const raw = window.localStorage.getItem(oauthStorageKey) || window.sessionStorage.getItem(oauthStorageKey);
-      if (!raw) {{
-        return null;
-      }}
-      try {{
-        const session = JSON.parse(raw);
-        window.localStorage.setItem(oauthStorageKey, JSON.stringify(session));
-        window.sessionStorage.removeItem(oauthStorageKey);
-        return session;
-      }} catch (error) {{
-        window.localStorage.removeItem(oauthStorageKey);
-        window.sessionStorage.removeItem(oauthStorageKey);
-        return null;
-      }}
-    }}
-
-    function writeStoredSession(session) {{
-      window.localStorage.setItem(oauthStorageKey, JSON.stringify(session));
-      window.sessionStorage.removeItem(oauthStorageKey);
-    }}
-
-    function clearStoredSession() {{
-      window.localStorage.removeItem(oauthStorageKey);
-      window.sessionStorage.removeItem(oauthStorageKey);
-    }}
-
-    function expiresAtFromSeconds(expiresInSeconds) {{
-      if (expiresInSeconds == null) {{
-        return null;
-      }}
-      return Date.now() + (expiresInSeconds * 1000);
-    }}
-
-    function randomString(byteLength = 32) {{
-      const bytes = new Uint8Array(byteLength);
-      window.crypto.getRandomValues(bytes);
-      return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
-    }}
-
-    async function sha256Base64Url(value) {{
-      const digest = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-      const bytes = new Uint8Array(digest);
-      let binary = "";
-      bytes.forEach((byte) => {{
-        binary += String.fromCharCode(byte);
-      }});
-      return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-    }}
-
-    function callbackUrl() {{
-      const url = new URL(window.location.href);
-      url.search = "";
-      url.hash = "";
-      return url.toString();
-    }}
-
-    function resourceUrl() {{
+    function serverUrl() {{
       return new URL(mcpPath, window.location.origin).toString();
     }}
 
-    async function registerClient() {{
-      const response = await fetch("/register", {{
-        method: "POST",
-        headers: {{
-          "Content-Type": "application/json"
-        }},
-        body: JSON.stringify({{
-          redirect_uris: [callbackUrl()],
-          token_endpoint_auth_method: "none",
-          grant_types: ["authorization_code", "refresh_token"],
-          response_types: ["code"],
-          scope: oauthScope,
-          client_name: "Archidekt Web UI"
-        }})
-      }});
-      if (!response.ok) {{
-        throw new Error(await response.text());
-      }}
-      return response.json();
-    }}
-
-    function waitForOAuthCallback(expectedState, popup) {{
-      return new Promise((resolve, reject) => {{
-        const timeoutId = window.setTimeout(() => {{
-          cleanup();
-          reject(new Error("Timed out while waiting for the Archidekt OAuth callback."));
-        }}, 5 * 60 * 1000);
-
-        const closePoll = window.setInterval(() => {{
-          if (popup.closed) {{
-            cleanup();
-            reject(new Error("The OAuth popup was closed before the sign-in completed."));
-          }}
-        }}, 500);
-
-        function cleanup() {{
-          window.clearTimeout(timeoutId);
-          window.clearInterval(closePoll);
-          window.removeEventListener("message", handleMessage);
-        }}
-
-        function handleMessage(event) {{
-          if (event.origin !== window.location.origin) {{
-            return;
-          }}
-          const payload = event.data || {{}};
-          if (payload.type !== "archidekt-oauth-callback") {{
-            return;
-          }}
-          if (payload.state !== expectedState) {{
-            cleanup();
-            reject(new Error("OAuth state mismatch while completing the sign-in flow."));
-            return;
-          }}
-          cleanup();
-          resolve(payload);
-        }}
-
-        window.addEventListener("message", handleMessage);
-      }});
-    }}
-
-    async function exchangeAuthorizationCode(clientId, code, verifier) {{
-      const response = await fetch("/token", {{
-        method: "POST",
-        headers: {{
-          "Content-Type": "application/x-www-form-urlencoded"
-        }},
-        body: encodeFormBody({{
-          grant_type: "authorization_code",
-          client_id: clientId,
-          code,
-          redirect_uri: callbackUrl(),
-          code_verifier: verifier
-        }})
-      }});
-      if (!response.ok) {{
-        throw new Error(await response.text());
-      }}
-      return response.json();
-    }}
-
-    async function refreshAccessToken(session) {{
-      if (!session?.client_id || !session?.refresh_token) {{
-        return null;
-      }}
-      const response = await fetch("/token", {{
-        method: "POST",
-        headers: {{
-          "Content-Type": "application/x-www-form-urlencoded"
-        }},
-        body: encodeFormBody({{
-          grant_type: "refresh_token",
-          client_id: session.client_id,
-          refresh_token: session.refresh_token
-        }})
-      }});
-      if (!response.ok) {{
-        throw new Error(await response.text());
-      }}
-      const payload = await response.json();
-      const refreshed = {{
-        ...session,
-        access_token: payload.access_token,
-        refresh_token: payload.refresh_token || session.refresh_token,
-        expires_at: expiresAtFromSeconds(payload.expires_in),
-        scope: payload.scope || session.scope
-      }};
-      writeStoredSession(refreshed);
-      return refreshed.access_token;
-    }}
-
-    async function revokeSession(session) {{
-      if (!session?.client_id) {{
-        return;
-      }}
-      const tokens = [
-        [session.access_token, "access_token"],
-        [session.refresh_token, "refresh_token"]
-      ];
-      for (const [token, hint] of tokens) {{
-        if (!token) {{
-          continue;
-        }}
-        try {{
-          await fetch("/revoke", {{
-            method: "POST",
-            headers: {{
-              "Content-Type": "application/x-www-form-urlencoded"
-            }},
-            body: encodeFormBody({{
-              client_id: session.client_id,
-              token,
-              token_type_hint: hint
-            }})
-          }});
-        }} catch (error) {{
-          console.warn("Best-effort token revocation failed.", error);
-        }}
-      }}
-    }}
-
-    async function getValidAccessToken() {{
-      if (!authEnabled) {{
-        return null;
-      }}
-      const session = readStoredSession();
-      if (!session?.access_token) {{
-        return null;
-      }}
-      if (!session.expires_at || (Date.now() + 30000) < session.expires_at) {{
-        return session.access_token;
-      }}
-      try {{
-        return await refreshAccessToken(session);
-      }} catch (error) {{
-        clearStoredSession();
-        updateAuthState();
-        throw error;
-      }}
-    }}
-
-    async function fetchAuthenticatedSummary() {{
-      const token = await getValidAccessToken();
-      if (!token) {{
-        return null;
-      }}
-      const response = await fetch("/api/login", {{
-        method: "POST",
-        headers: {{
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + token
-        }},
-        body: JSON.stringify({{}})
-      }});
-      if (!response.ok) {{
-        const message = await response.text();
-        if (response.status === 401 || response.status === 403) {{
-          clearStoredSession();
-          throw new Error("Saved OAuth session could not renew Archidekt authentication. Reconnect Archidekt. " + message);
-        }}
-        throw new Error(message);
-      }}
-      return response.json();
-    }}
-
-    async function connectAuth() {{
-      if (!authEnabled) {{
-        throw new Error("OAuth is not enabled on this deployment.");
-      }}
-      connectButton.disabled = true;
-      statusEl.textContent = "Preparing OAuth sign-in...";
-      try {{
-        const registeredClient = await registerClient();
-        const state = randomString(20);
-        const verifier = randomString(48);
-        const challenge = await sha256Base64Url(verifier);
-        const authorizeUrl = new URL("/authorize", window.location.origin);
-        authorizeUrl.searchParams.set("response_type", "code");
-        authorizeUrl.searchParams.set("client_id", registeredClient.client_id);
-        authorizeUrl.searchParams.set("redirect_uri", callbackUrl());
-        authorizeUrl.searchParams.set("scope", oauthScope);
-        authorizeUrl.searchParams.set("state", state);
-        authorizeUrl.searchParams.set("resource", resourceUrl());
-        authorizeUrl.searchParams.set("code_challenge", challenge);
-        authorizeUrl.searchParams.set("code_challenge_method", "S256");
-
-        const popup = window.open(
-          authorizeUrl.toString(),
-          "archidekt-oauth",
-          "popup=yes,width=560,height=760"
-        );
-        if (!popup) {{
-          throw new Error("The OAuth popup was blocked. Allow popups for this site and try again.");
-        }}
-
-        statusEl.textContent = "Complete the Archidekt sign-in in the popup window.";
-        const callbackPayload = await waitForOAuthCallback(state, popup);
-        if (callbackPayload.error) {{
-          throw new Error(callbackPayload.error_description || callbackPayload.error);
-        }}
-        if (!callbackPayload.code) {{
-          throw new Error("OAuth completed without an authorization code.");
-        }}
-
-        const tokenPayload = await exchangeAuthorizationCode(
-          registeredClient.client_id,
-          callbackPayload.code,
-          verifier
-        );
-        writeStoredSession({{
-          client_id: registeredClient.client_id,
-          access_token: tokenPayload.access_token,
-          refresh_token: tokenPayload.refresh_token || null,
-          expires_at: expiresAtFromSeconds(tokenPayload.expires_in),
-          scope: tokenPayload.scope || oauthScope
-        }});
-
-        await updateAuthState(true);
-        statusEl.textContent = "Archidekt OAuth connected.";
-      }} finally {{
-        connectButton.disabled = false;
-      }}
-    }}
-
-    async function disconnectAuth() {{
-      const session = readStoredSession();
-      disconnectButton.disabled = true;
-      try {{
-        await revokeSession(session);
-      }} finally {{
-        clearStoredSession();
-        disconnectButton.disabled = false;
-        await updateAuthState();
-        statusEl.textContent = "Archidekt OAuth disconnected.";
-      }}
-    }}
-
-    async function updateAuthState(silent = false) {{
-      const session = readStoredSession();
-      if (!authEnabled) {{
-        authStateEl.textContent = "OAuth not available on this deployment.";
-        authStateEl.classList.remove("connected");
-        authMetaEl.textContent = "Enable MCP OAuth on the server to test private account APIs from the browser.";
-        connectButton.disabled = true;
-        disconnectButton.disabled = true;
-        testLoginButton.disabled = true;
-        testPersonalDecksButton.disabled = true;
-        return;
-      }}
-
-      connectButton.disabled = false;
-      disconnectButton.disabled = !session;
-      testLoginButton.disabled = !session;
-      testPersonalDecksButton.disabled = !session;
-
-      if (!session) {{
-        authStateEl.textContent = "OAuth not connected.";
-        authStateEl.classList.remove("connected");
-        authMetaEl.textContent = "Connect Archidekt to test private account routes from this page.";
-        return;
-      }}
-
-      try {{
-        const summary = await fetchAuthenticatedSummary();
-        const deckCount = summary?.personal_decks?.total_decks;
-        const username = summary?.account?.username || "authenticated user";
-        authStateEl.textContent = "Connected as " + username;
-        authStateEl.classList.add("connected");
-        authMetaEl.textContent = deckCount == null
-          ? "Authenticated private API access is available."
-          : "Authenticated private API access is available. Personal decks detected: " + deckCount + ".";
-      }} catch (error) {{
-        if (!silent) {{
-          console.warn("Failed to refresh OAuth status.", error);
-        }}
-        const sessionStillStored = Boolean(readStoredSession());
-        disconnectButton.disabled = !sessionStillStored;
-        testLoginButton.disabled = !sessionStillStored;
-        testPersonalDecksButton.disabled = !sessionStillStored;
-        authStateEl.textContent = sessionStillStored
-          ? "Saved OAuth session needs attention."
-          : "OAuth reconnect required.";
-        authStateEl.classList.remove("connected");
-        authMetaEl.textContent = sessionStillStored
-          ? "Reconnect Archidekt if authenticated API tests start failing."
-          : "Saved browser session was cleared because Archidekt authentication could not be renewed. Reconnect Archidekt.";
-      }}
+    function isLocalOrigin() {{
+      return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
     }}
 
     function readCollection() {{
@@ -870,218 +1106,253 @@
       return collection;
     }}
 
-    function readFilters() {{
-      const raw = document.getElementById("filters").value.trim();
-      if (!raw) {{
-        return {{}};
-      }}
-      return JSON.parse(raw);
+    function collectionHasLocator(collection) {{
+      return Boolean(collection.collection_id || collection.collection_url || collection.username);
     }}
 
-    function buildInstructions(collection, prompt) {{
-      const promptLine = prompt.trim()
-        ? "\nUser request: " + prompt.trim()
-        : "";
+    function collectionDescription(collection) {{
+      if (collection.collection_url) {{
+        return "Collection link: " + collection.collection_url;
+      }}
+      if (collection.collection_id) {{
+        return "Collection ID: " + collection.collection_id;
+      }}
+      if (collection.username) {{
+        return "Archidekt username: " + collection.username;
+      }}
+      return "Collection: not filled in yet";
+    }}
 
-      return [
-        "Use this MCP server in a stateless way.",
-        "Pass the following `collection` object in every tool call:",
+    function gameLabel(game) {{
+      if (game === 2) {{
+        return "MTGO";
+      }}
+      if (game === 3) {{
+        return "Arena";
+      }}
+      return "Paper";
+    }}
+
+    function buildDeckBrief() {{
+      const collection = readCollection();
+      const mode = document.getElementById("deck-mode").value;
+      const power = cleanValue(document.getElementById("power-level").value) || "Casual";
+      const commander = cleanValue(document.getElementById("commander").value);
+      const budget = cleanValue(document.getElementById("budget").value);
+      const deckLink = cleanValue(document.getElementById("deck-link").value);
+      const prompt = cleanValue(document.getElementById("prompt").value);
+      const ownedOnly = document.getElementById("owned-only").checked;
+      const allowWrites = document.getElementById("allow-writes").checked;
+
+      const lines = [
+        "I want to create or improve a Commander deck using my Archidekt assistant.",
+        "",
+        "Use the connected Archidekt tools. For every collection search, include this collection object:",
         JSON.stringify(collection, null, 2),
-        "Rules:",
-        "- Never assume the collection remains in memory between requests.",
-        "- If private collections or personal decks matter, authenticate through MCP OAuth first, then call `login_archidekt` without an `account` payload.",
-        "- Reuse the active OAuth-backed Archidekt identity for private deck reads and writes instead of passing credentials manually.",
-        "- Use `get_collection_overview` whenever you need context before making recommendations.",
-        "- Use `list_personal_decks` when you need the user's own decks.",
-        "- Use `search_archidekt_cards` to resolve Archidekt `card_id` values before deck or collection writes.",
-        "- When you need several exact card lookups, call `search_archidekt_cards` once with `exact_name` as a list.",
-        "- Use `requested_exact_name` in the response to map returned printings back to the requested card names.",
-        "- Use `get_personal_deck_cards` before editing an existing deck so you have fresh `deck_relation_id` values.",
-        "- Use `search_owned_cards` only for owned cards.",
-        "- Use `search_unowned_cards` only for missing cards.",
-        "- When you need sorting, prefer canonical filters with `sort_by` plus `sort_direction`.",
-        "- Use `sort_by: unit_price` and `sort_direction: desc` for highest price first.",
-        "- Use `sort_by: unit_price` and `sort_direction: asc` for cheapest cards first.",
-        "- Use `sort_by: edhrec_rank` and `sort_direction: asc` for the best EDHREC rank first.",
-        "- Use `sort_by: rarity` or `sort_by: added_at` only when those are actually relevant to the request.",
-        "- When `search_owned_cards` returns `personal_deck_usage`, ask the user whether cards already committed to other decks may be reused.",
-        "- When `search_owned_cards` returns `archidekt_card_ids`, reuse those ids for deck or collection writes.",
-        "- Collection quantities may be any positive integer.",
-        "- Deck writes may use `modifications.quantity` values greater than 1 when needed.",
-        "- For deck writes, quantity belongs in `modifications.quantity`, not as a top-level card field.",
-        "- For collection writes, provide `record_id` to update an existing row; omitting it creates a new row.",
-        "- Use `delete_collection_entries` with `archidekt_record_ids` from `search_owned_cards` when removing collection rows.",
-        "- After an authenticated collection write, the next authenticated read of that same self collection bypasses cached snapshots once.",
-        "- For Commander decks, only basic lands should normally exceed 1 copy.",
-        "- For most other formats, non-basic cards should normally stay at 4 copies or fewer while basic lands may be unlimited.",
-        "Default response format:",
-        "- Use this structure unless the user explicitly asks for a different format.",
-        "- Start with a short strategy guide that explains the deck plan, key synergies, pacing, and win conditions.",
-        "- Then group cards by category.",
-        "- Inside each category, write one card per line as `N Card Name`.",
-        "- `N` is the exact quantity of that card to add to the deck.",
-        "- Do not default every card to 1; quantities should follow the deck format's copy rules.",
-        "- Do not use bullets or numbering on card lines.",
-        "Example:",
+        "",
+        collectionDescription(collection),
+        "Collection type: " + gameLabel(collection.game),
+        "Deckbuilding goal: " + mode,
+        "Power target: " + power,
+      ];
+
+      if (commander) {{
+        lines.push("Commander, colors, or theme: " + commander);
+      }}
+      if (deckLink) {{
+        lines.push("Existing deck link: " + deckLink);
+      }}
+      if (budget) {{
+        lines.push("Budget or price limit: " + budget);
+      }}
+      if (prompt) {{
+        lines.push("", "My request:", prompt);
+      }}
+
+      lines.push(
+        "",
+        "How to work:",
+        "- First get a collection overview so you understand the owned card pool.",
+        "- Use search_owned_cards for cards I own and search_unowned_cards for missing upgrades.",
+        "- Use search_archidekt_cards to resolve Archidekt card IDs before any deck or collection write.",
+        "- If you need several exact card names, send them together in one exact_name list.",
+        "- If personal deck usage appears on owned cards, ask me before reusing cards already committed to other personal decks.",
+        "- For Commander, use more than 1 copy only for basic lands.",
+        "- Group recommendations by role: ramp, draw, removal, protection, synergy, finishers, lands.",
+        "- Give me a short strategy guide before the card list.",
+      );
+
+      if (ownedOnly) {{
+        lines.push(
+          "- Prefer cards I already own.",
+          "- Before finalizing a collection-only deck, use check_collection_card_availability and replace cards with enough_copies=false or must_not_use=true.",
+        );
+      }} else {{
+        lines.push("- Include missing upgrade suggestions when they are meaningfully better than owned options.");
+      }}
+
+      if (allowWrites) {{
+        lines.push(
+          "- Do not create or update anything immediately.",
+          "- Show me the final deck changes first, then wait for my explicit confirmation before using create_personal_deck, update_personal_deck, or modify_personal_deck_cards.",
+        );
+      }} else {{
+        lines.push("- Do not write changes to Archidekt unless I ask later.");
+      }}
+
+      lines.push(
+        "",
+        "Preferred output format:",
         "Strategy Guide",
-        "Use early ramp to fix mana, stabilize through efficient interaction, then snowball advantage with the deck's main engines and finishers.",
+        "A short explanation of how the deck should play.",
         "",
         "Ramp",
         "1 Sol Ring",
         "1 Arcane Signet",
         "",
         "Removal",
-        "1 Swords to Plowshares",
-        promptLine,
-      ].filter(Boolean).join("\n");
+        "1 Swords to Plowshares"
+      );
+
+      return lines.join("\\n");
     }}
 
-    function updateOutputs() {{
-      const collection = readCollection();
-      const prompt = document.getElementById("prompt").value;
-      collectionJsonEl.textContent = JSON.stringify(collection, null, 2);
-      instructionsEl.textContent = buildInstructions(collection, prompt);
+    function guideHtml(kind) {{
+      const url = serverUrl();
+      if (kind === "claude") {{
+        return [
+          "<h3>Connect in Claude</h3>",
+          "<ol>",
+          "<li>Open Claude, then go to <strong>Customize > Connectors</strong>.</li>",
+          "<li>Choose <strong>Add custom connector</strong>.</li>",
+          "<li>Paste this server URL: <strong>" + url + "</strong>.</li>",
+          "<li>Click <strong>Add</strong>, then <strong>Connect</strong>. If prompted, sign in to Archidekt.</li>",
+          "<li>In your conversation, use the <strong>+</strong> menu, open <strong>Connectors</strong>, and enable this connector.</li>",
+          "</ol>",
+          "<p class=\\"muted\\">Claude connects from Anthropic's cloud, so use the public HTTPS URL for this same page.</p>",
+          "<a href=\\"https://support.anthropic.com/en/articles/11175166-getting-started-with-custom-integrations-using-remote-mcp\\" target=\\"_blank\\" rel=\\"noreferrer\\">Claude connector guide</a>",
+        ].join("");
+      }}
+      if (kind === "other") {{
+        return [
+          "<h3>Connect in another AI app</h3>",
+          "<ol>",
+          "<li>Look for a setting named <strong>MCP servers</strong>, <strong>Connectors</strong>, or <strong>Tools</strong>.</li>",
+          "<li>Add a remote server. If the app asks for a connection type, choose <strong>Streamable HTTP</strong>.</li>",
+          "<li>Paste this URL: <strong>" + url + "</strong>.</li>",
+          "<li>If the app asks for authentication, choose OAuth or browser sign-in when available.</li>",
+          "<li>Paste the deckbuilding request from this page into a new chat.</li>",
+          "</ol>",
+          "<p class=\\"muted\\">Some apps only support local connectors. In that case, ask the person hosting this page for the right setup.</p>",
+        ].join("");
+      }}
+      return [
+        "<h3>Connect in ChatGPT</h3>",
+        "<ol>",
+        "<li>Open ChatGPT settings and go to <strong>Connectors</strong>.</li>",
+        "<li>If your account asks for it, enable <strong>Developer mode</strong> under <strong>Connectors > Advanced</strong>.</li>",
+        "<li>Create an app or add a custom connector for a remote MCP server.</li>",
+        "<li>Paste this server URL: <strong>" + url + "</strong>.</li>",
+        "<li>Connect it. If prompted, sign in to Archidekt so private decks and writes can work.</li>",
+        "<li>Start a chat, enable the connector from ChatGPT's tools/connectors menu, and paste the deckbuilding request.</li>",
+        "</ol>",
+        "<p class=\\"muted\\">ChatGPT needs a remote server URL for cloud connectors. Localhost links work only in your own browser.</p>",
+        "<a href=\\"https://platform.openai.com/docs/developer-mode\\" target=\\"_blank\\" rel=\\"noreferrer\\">ChatGPT connector guide</a>",
+      ].join("");
     }}
 
-    async function runRequest(endpoint, body, requireAuth = false) {{
-      statusEl.textContent = "Request in progress...";
-      resultEl.textContent = "";
-      try {{
-        const token = await getValidAccessToken();
-        if (requireAuth && !token) {{
-          throw new Error("Connect Archidekt with OAuth before testing this authenticated API.");
-        }}
-        const headers = {{
-          "Content-Type": "application/json"
-        }};
-        if (token) {{
-          headers["Authorization"] = "Bearer " + token;
-        }}
-        const response = await fetch(endpoint, {{
-          method: "POST",
-          headers,
-          body: JSON.stringify(body)
-        }});
+    function updateGuides() {{
+      serverUrlEl.textContent = serverUrl();
+      chatbotGuideEl.innerHTML = guideHtml(selectedChatbot);
+      localWarning.classList.toggle("hidden", !isLocalOrigin());
+      authModeLabel.textContent = authEnabled ? "Available through the chatbot" : "Public collections only";
+      authCountPill.textContent = authEnabled ? "Ready" : "Public";
+      authModeChip.textContent = authEnabled
+        ? "Private Archidekt sign-in is available when your chatbot connects"
+        : "Public collections only until the host enables sign-in";
+      authModeChip.classList.toggle("gold", !authEnabled);
+      authCountPill.classList.toggle("gold", !authEnabled);
+    }}
 
-        const payload = await response.json();
-        resultEl.textContent = JSON.stringify(payload, null, 2);
-        statusEl.textContent = response.ok ? "Request completed." : "Request failed.";
-      }} catch (error) {{
-        statusEl.textContent = "Network error.";
-        resultEl.textContent = String(error);
+    function updateBrief(showStatus = false) {{
+      deckBriefEl.textContent = buildDeckBrief();
+      if (showStatus) {{
+        const collection = readCollection();
+        statusEl.textContent = collectionHasLocator(collection)
+          ? "Deckbuilding brief ready to copy."
+          : "Add a username, collection link, or collection ID before sending this to your chatbot.";
       }}
     }}
 
-    async function copyFromElement(targetId, button) {{
-      const target = document.getElementById(targetId);
+    async function copyText(text, button) {{
       try {{
-        await navigator.clipboard.writeText(target.textContent || "");
+        await navigator.clipboard.writeText(text);
         const previous = button.textContent;
         button.textContent = "Copied";
         setTimeout(() => {{
           button.textContent = previous;
         }}, 1200);
       }} catch (error) {{
-        statusEl.textContent = "Clipboard copy failed.";
-        resultEl.textContent = String(error);
+        statusEl.textContent = "Copy failed. Select the text manually and copy it.";
       }}
     }}
 
-    document.getElementById("build-context").addEventListener("click", () => {{
-      try {{
-        updateOutputs();
-        readFilters();
-        statusEl.textContent = "LLM context updated.";
-      }} catch (error) {{
-        statusEl.textContent = "Filters JSON is invalid.";
-        resultEl.textContent = String(error);
+    function applyExample(name) {{
+      const example = examples[name];
+      if (!example) {{
+        return;
       }}
+      document.getElementById("deck-mode").value = example.mode;
+      document.getElementById("power-level").value = example.power;
+      document.getElementById("commander").value = example.commander;
+      document.getElementById("budget").value = example.budget;
+      document.getElementById("prompt").value = example.prompt;
+      document.getElementById("owned-only").checked = example.ownedOnly;
+      document.getElementById("allow-writes").checked = example.allowWrites;
+      updateBrief(true);
+    }}
+
+    document.getElementById("build-brief").addEventListener("click", () => updateBrief(true));
+    document.getElementById("reset-form").addEventListener("click", () => {{
+      ["username", "collection-url", "collection-id", "commander", "budget", "deck-link", "prompt"].forEach((id) => {{
+        document.getElementById(id).value = "";
+      }});
+      document.getElementById("game").value = "1";
+      document.getElementById("deck-mode").value = "Build a new Commander deck";
+      document.getElementById("power-level").value = "Casual";
+      document.getElementById("owned-only").checked = true;
+      document.getElementById("allow-writes").checked = false;
+      updateBrief(true);
     }});
 
-    connectButton.addEventListener("click", async () => {{
-      try {{
-        await connectAuth();
-      }} catch (error) {{
-        statusEl.textContent = "OAuth sign-in failed.";
-        resultEl.textContent = String(error);
-        await updateAuthState(true);
-      }}
+    document.querySelectorAll("[data-chatbot]").forEach((button) => {{
+      button.addEventListener("click", () => {{
+        selectedChatbot = button.dataset.chatbot;
+        document.querySelectorAll("[data-chatbot]").forEach((candidate) => {{
+          candidate.classList.toggle("active", candidate === button);
+        }});
+        updateGuides();
+      }});
     }});
 
-    disconnectButton.addEventListener("click", async () => {{
-      try {{
-        await disconnectAuth();
-      }} catch (error) {{
-        statusEl.textContent = "OAuth disconnect failed.";
-        resultEl.textContent = String(error);
-      }}
-    }});
-
-    testLoginButton.addEventListener("click", async () => {{
-      try {{
-        updateOutputs();
-        await runRequest("/api/login", {{}}, true);
-      }} catch (error) {{
-        statusEl.textContent = "Authenticated login test failed.";
-        resultEl.textContent = String(error);
-      }}
-    }});
-
-    testPersonalDecksButton.addEventListener("click", async () => {{
-      try {{
-        updateOutputs();
-        await runRequest("/api/personal-decks", {{}}, true);
-      }} catch (error) {{
-        statusEl.textContent = "Authenticated deck test failed.";
-        resultEl.textContent = String(error);
-      }}
-    }});
-
-    document.getElementById("test-overview").addEventListener("click", async () => {{
-      try {{
-        const collection = readCollection();
-        updateOutputs();
-        await runRequest("/api/overview", {{ collection }});
-      }} catch (error) {{
-        statusEl.textContent = "Collection input is invalid.";
-        resultEl.textContent = String(error);
-      }}
-    }});
-
-    document.getElementById("test-owned").addEventListener("click", async () => {{
-      try {{
-        const collection = readCollection();
-        const filters = readFilters();
-        updateOutputs();
-        await runRequest("/api/search-owned", {{ collection, filters }});
-      }} catch (error) {{
-        statusEl.textContent = "Request input is invalid.";
-        resultEl.textContent = String(error);
-      }}
-    }});
-
-    document.getElementById("test-unowned").addEventListener("click", async () => {{
-      try {{
-        const collection = readCollection();
-        const filters = readFilters();
-        updateOutputs();
-        await runRequest("/api/search-unowned", {{ collection, filters }});
-      }} catch (error) {{
-        statusEl.textContent = "Request input is invalid.";
-        resultEl.textContent = String(error);
-      }}
+    document.querySelectorAll("[data-example]").forEach((row) => {{
+      row.addEventListener("click", () => applyExample(row.dataset.example));
     }});
 
     document.querySelectorAll("[data-copy-target]").forEach((button) => {{
-      button.addEventListener("click", () => copyFromElement(button.dataset.copyTarget, button));
+      button.addEventListener("click", () => {{
+        const target = document.getElementById(button.dataset.copyTarget);
+        copyText(target.textContent || "", button);
+      }});
     }});
 
     document.querySelectorAll("input, textarea, select").forEach((element) => {{
-      element.addEventListener("input", updateOutputs);
+      element.addEventListener("input", () => updateBrief(false));
+      element.addEventListener("change", () => updateBrief(false));
     }});
 
-    updateOutputs();
-    updateAuthState(true);
+    updateGuides();
+    updateBrief(false);
   </script>
 </body>
 </html>

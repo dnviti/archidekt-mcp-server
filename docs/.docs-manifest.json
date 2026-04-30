@@ -1,0 +1,642 @@
+{
+  "version": "1.0",
+  "generated_at": "2026-04-30T18:12:53.422062Z",
+  "visual_richness": "tiny",
+  "sections": [
+    {
+      "name": "api-reference",
+      "file": "api-reference.md",
+      "source_files": [
+        {
+          "path": "README.md",
+          "hash": "0f11e188194c814d08b48ed131c03c9991c0c22727eb2cd661d588b0f9fbcdf9"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/tools.py",
+          "hash": "a27e244df701547229a10fa1cb0cd5ec6e46a875a35f30bd453a6bcab5b7cd84"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/routes.py",
+          "hash": "4ae766a4527fc8e7c2c52f49c1cd7f6b9a3b8b7adc4d450cb8dd905029a28501"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/resources.py",
+          "hash": "839887e761d73125818cd60ef4ea3d8c0efd1f6da605676c1d1caae3e8bf0073"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/health.py",
+          "hash": "4cd5affb9b3f0c046ea36aa1a3dfde09110d8a81de704a11e1d2aeb00ab47e2e"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/http_helpers.py",
+          "hash": "28cd2a2a95a75a7af28fa2a2e9ed4a75ea6c6905d0732ee5d2971e4aa907e32c"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/oauth.py",
+          "hash": "d8d5c8f3ded117fda493a3eba77b9affc64fac3e6e151e885de2c6f7341f980b"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/home.py",
+          "hash": "e0d3e4f8f7b3d62813a71eaf4018a7d7fa535166afa97dea6485279e45ee93a5"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/templates/home.html",
+          "hash": "2148c5b71ac4620be99b60ba08274fb01b3199da19ca4d8bba112365ced3244f"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/schemas/accounts.py",
+          "hash": "84437e9eecaf2168e6d0b0f9fd294f6a6834bdbba5c34aa354e2d383c6554659"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/schemas/cards.py",
+          "hash": "d2447616d06828024475a4d17f3a39beae8fbdd1dcdca5a5b348810b242fcdc9"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/schemas/collections.py",
+          "hash": "21959a773096fa120c601d106360112ef9d73898c2631da3f4381808b5d1523b"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/schemas/decks.py",
+          "hash": "cde9e8065bd6122319265647883adf90cf4736fa8682e0cb7b9941a313728c04"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/schemas/search.py",
+          "hash": "c339b8c034f31790e650b127e98dfeec8205be6c06926c2375331f3aac3eb268"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/server_contracts.py",
+          "hash": "3924a648c226d596d92ddd1bb517e174e99a0da2337de445faef8d2f2ab47770"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/deckbuilding.py",
+          "hash": "5ed7ab93521cb0cae658a1951300d3e4a1e8e280fcb8d34817974e9804e880c3"
+        }
+      ],
+      "generated_at": "2026-04-30T18:12:53.419913Z"
+    },
+    {
+      "name": "architecture",
+      "file": "architecture.md",
+      "source_files": [
+        {
+          "path": "CONTEXT.md",
+          "hash": "e9aa8dd23bac069ca8c393857c3288c776554dad9c8125c2b135146347ac47dd"
+        },
+        {
+          "path": "README.md",
+          "hash": "0f11e188194c814d08b48ed131c03c9991c0c22727eb2cd661d588b0f9fbcdf9"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/__main__.py",
+          "hash": "1d8f7fd7a7385b76b7bedae36d90424daa7c0c17c7890331ed4457502b64aa18"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/server.py",
+          "hash": "f123aab73368cf2d7eb31d1caa7439f8dc3ab41c991900d46b89be72dd9f2ca4"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/runtime_cli.py",
+          "hash": "e3f8d8bca34f31ae06e97b017068ab43009230ac83cd95889909eceabbcfc86c"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/config.py",
+          "hash": "9d1071babb755f574e8759b9a7a2584b6931ba8d7a0a87df6dfc3b01de6fe299"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/factory.py",
+          "hash": "526ac1ef38d743eb5b26579d3e858011c7ebae4828f37da640d0da2c6fe592b0"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/proxy.py",
+          "hash": "befb1bea9f54ab2a2b0fcc795915f976caca5c4ed1bbbf9c74116b43808f9d47"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/service_provider.py",
+          "hash": "15338e6d8104a6e633f3e133ecce07c3adb1a3066786b5a0e429f371f0b07c13"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/health.py",
+          "hash": "4cd5affb9b3f0c046ea36aa1a3dfde09110d8a81de704a11e1d2aeb00ab47e2e"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/oauth.py",
+          "hash": "d8d5c8f3ded117fda493a3eba77b9affc64fac3e6e151e885de2c6f7341f980b"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/routes.py",
+          "hash": "4ae766a4527fc8e7c2c52f49c1cd7f6b9a3b8b7adc4d450cb8dd905029a28501"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/resources.py",
+          "hash": "839887e761d73125818cd60ef4ea3d8c0efd1f6da605676c1d1caae3e8bf0073"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/tools.py",
+          "hash": "a27e244df701547229a10fa1cb0cd5ec6e46a875a35f30bd453a6bcab5b7cd84"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/home.py",
+          "hash": "e0d3e4f8f7b3d62813a71eaf4018a7d7fa535166afa97dea6485279e45ee93a5"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/templates/home.html",
+          "hash": "2148c5b71ac4620be99b60ba08274fb01b3199da19ca4d8bba112365ced3244f"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/server_contracts.py",
+          "hash": "3924a648c226d596d92ddd1bb517e174e99a0da2337de445faef8d2f2ab47770"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/deckbuilding.py",
+          "hash": "5ed7ab93521cb0cae658a1951300d3e4a1e8e280fcb8d34817974e9804e880c3"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/card_search.py",
+          "hash": "84f089f63c065dede100b10eded386b4d84e8ba66f02adc2ab15f88ca6c2dd34"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/personal_decks.py",
+          "hash": "3cff683b34eb99dbd520a21052338a220dfd52fda5d84c1200a539a400fc51ac"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/authenticated_cache.py",
+          "hash": "ffe6f1b4ac00ab3b6d67abd03d47a1426b4bd072ad439a38c6ffe9870817b2f0"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/deck_usage.py",
+          "hash": "7defe3ac12290f207ba328ee3c8493e9f8d451b3b198de6b990907177fb7714c"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/snapshot_cache.py",
+          "hash": "13dafb4e64939d3731deb8ccdd2aeb2d5a41af7f86ec77f1cae72248b6aa39ac"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/integrations/public_collection.py",
+          "hash": "7d5a5c769595a05ea6a337362f1fab31ffc7fb42f182fcd92b82fd4705eca65b"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/integrations/authenticated.py",
+          "hash": "229c9db716e4314866c836e893e10c5fea4af2f8cbe8bb3fb8533c4a41667e16"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/integrations/scryfall.py",
+          "hash": "380540389e6fe731b44047ecd33c3c7fb18ea11c116bf1f81b249b4c72300d70"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/integrations/collection_cache.py",
+          "hash": "b30624cafc3a213268f0d71e6d9304abd7474fa1789dae70922128fcd4e730ad"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/auth/provider.py",
+          "hash": "4be56394a52f4f25df0b1f2cea8d9783252d37cf143dba5bb59f34e3fed6f08b"
+        }
+      ],
+      "generated_at": "2026-04-30T18:12:53.420382Z"
+    },
+    {
+      "name": "configuration",
+      "file": "configuration.md",
+      "source_files": [
+        {
+          "path": "README.md",
+          "hash": "0f11e188194c814d08b48ed131c03c9991c0c22727eb2cd661d588b0f9fbcdf9"
+        },
+        {
+          "path": "pyproject.toml",
+          "hash": "6b374c2442845e2068b9fe85aee5c46b78377b7e4372981ead2566e4615573d2"
+        },
+        {
+          "path": "compose.yml",
+          "hash": "bad5814abda11745f19bdf3ba1366fcea4ab2b86e23c7d2e0f0b5c7de848e98b"
+        },
+        {
+          "path": "Dockerfile",
+          "hash": "da7e582640e988ea3fd12387b543540b05321c1b6031cda523b76e94e8fc90f0"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/config.py",
+          "hash": "9d1071babb755f574e8759b9a7a2584b6931ba8d7a0a87df6dfc3b01de6fe299"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/runtime_cli.py",
+          "hash": "e3f8d8bca34f31ae06e97b017068ab43009230ac83cd95889909eceabbcfc86c"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/oauth.py",
+          "hash": "d8d5c8f3ded117fda493a3eba77b9affc64fac3e6e151e885de2c6f7341f980b"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/proxy.py",
+          "hash": "befb1bea9f54ab2a2b0fcc795915f976caca5c4ed1bbbf9c74116b43808f9d47"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/home.py",
+          "hash": "e0d3e4f8f7b3d62813a71eaf4018a7d7fa535166afa97dea6485279e45ee93a5"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/auth/provider.py",
+          "hash": "4be56394a52f4f25df0b1f2cea8d9783252d37cf143dba5bb59f34e3fed6f08b"
+        }
+      ],
+      "generated_at": "2026-04-30T18:12:53.420525Z"
+    },
+    {
+      "name": "deployment",
+      "file": "deployment.md",
+      "source_files": [
+        {
+          "path": "README.md",
+          "hash": "0f11e188194c814d08b48ed131c03c9991c0c22727eb2cd661d588b0f9fbcdf9"
+        },
+        {
+          "path": "Dockerfile",
+          "hash": "da7e582640e988ea3fd12387b543540b05321c1b6031cda523b76e94e8fc90f0"
+        },
+        {
+          "path": "Containerfile",
+          "hash": "da7e582640e988ea3fd12387b543540b05321c1b6031cda523b76e94e8fc90f0"
+        },
+        {
+          "path": "compose.yml",
+          "hash": "bad5814abda11745f19bdf3ba1366fcea4ab2b86e23c7d2e0f0b5c7de848e98b"
+        },
+        {
+          "path": ".github/workflows/docker.yml",
+          "hash": "5d96d1786a623783c06992fea52ff8751b9e2d0ca3e8515702272e8b93f73d8c"
+        },
+        {
+          "path": "pyproject.toml",
+          "hash": "6b374c2442845e2068b9fe85aee5c46b78377b7e4372981ead2566e4615573d2"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/config.py",
+          "hash": "9d1071babb755f574e8759b9a7a2584b6931ba8d7a0a87df6dfc3b01de6fe299"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/runtime_cli.py",
+          "hash": "e3f8d8bca34f31ae06e97b017068ab43009230ac83cd95889909eceabbcfc86c"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/proxy.py",
+          "hash": "befb1bea9f54ab2a2b0fcc795915f976caca5c4ed1bbbf9c74116b43808f9d47"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/health.py",
+          "hash": "4cd5affb9b3f0c046ea36aa1a3dfde09110d8a81de704a11e1d2aeb00ab47e2e"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/home.py",
+          "hash": "e0d3e4f8f7b3d62813a71eaf4018a7d7fa535166afa97dea6485279e45ee93a5"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/templates/home.html",
+          "hash": "2148c5b71ac4620be99b60ba08274fb01b3199da19ca4d8bba112365ced3244f"
+        }
+      ],
+      "generated_at": "2026-04-30T18:12:53.420692Z"
+    },
+    {
+      "name": "development",
+      "file": "development.md",
+      "source_files": [
+        {
+          "path": "README.md",
+          "hash": "0f11e188194c814d08b48ed131c03c9991c0c22727eb2cd661d588b0f9fbcdf9"
+        },
+        {
+          "path": "CONTEXT.md",
+          "hash": "e9aa8dd23bac069ca8c393857c3288c776554dad9c8125c2b135146347ac47dd"
+        },
+        {
+          "path": "pyproject.toml",
+          "hash": "6b374c2442845e2068b9fe85aee5c46b78377b7e4372981ead2566e4615573d2"
+        },
+        {
+          "path": ".github/workflows/docker.yml",
+          "hash": "5d96d1786a623783c06992fea52ff8751b9e2d0ca3e8515702272e8b93f73d8c"
+        },
+        {
+          "path": "tests/test_server.py",
+          "hash": "b9f738d8fc89b6b1dd1d8e3bb23dbcce12aa05c050ac5fd32f3a109516128f30"
+        },
+        {
+          "path": "tests/test_filters.py",
+          "hash": "36f032f4f806d67bf5fb247d8b3b92373623fae3adce87b0426af4059c39e495"
+        },
+        {
+          "path": "tests/support.py",
+          "hash": "e88b774305c4c2066c5d02d4d71313112eb35e4bc5291ec1648f764421ec63f2"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/health.py",
+          "hash": "4cd5affb9b3f0c046ea36aa1a3dfde09110d8a81de704a11e1d2aeb00ab47e2e"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/home.py",
+          "hash": "e0d3e4f8f7b3d62813a71eaf4018a7d7fa535166afa97dea6485279e45ee93a5"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/templates/home.html",
+          "hash": "2148c5b71ac4620be99b60ba08274fb01b3199da19ca4d8bba112365ced3244f"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/models.py",
+          "hash": "e80de478f49e1802f6147414268b8474388f8dfa4181ea963fd073fc1491076c"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/clients.py",
+          "hash": "17659e960e7eebef19d71a6c5e122758e6817ef6f7c5aee29093acec233ca5f5"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/server_contracts.py",
+          "hash": "3924a648c226d596d92ddd1bb517e174e99a0da2337de445faef8d2f2ab47770"
+        }
+      ],
+      "generated_at": "2026-04-30T18:12:53.421001Z"
+    },
+    {
+      "name": "getting-started",
+      "file": "getting-started.md",
+      "source_files": [
+        {
+          "path": "README.md",
+          "hash": "0f11e188194c814d08b48ed131c03c9991c0c22727eb2cd661d588b0f9fbcdf9"
+        },
+        {
+          "path": "pyproject.toml",
+          "hash": "6b374c2442845e2068b9fe85aee5c46b78377b7e4372981ead2566e4615573d2"
+        },
+        {
+          "path": "Dockerfile",
+          "hash": "da7e582640e988ea3fd12387b543540b05321c1b6031cda523b76e94e8fc90f0"
+        },
+        {
+          "path": "Containerfile",
+          "hash": "da7e582640e988ea3fd12387b543540b05321c1b6031cda523b76e94e8fc90f0"
+        },
+        {
+          "path": "compose.yml",
+          "hash": "bad5814abda11745f19bdf3ba1366fcea4ab2b86e23c7d2e0f0b5c7de848e98b"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/__main__.py",
+          "hash": "1d8f7fd7a7385b76b7bedae36d90424daa7c0c17c7890331ed4457502b64aa18"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/server.py",
+          "hash": "f123aab73368cf2d7eb31d1caa7439f8dc3ab41c991900d46b89be72dd9f2ca4"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/runtime_cli.py",
+          "hash": "e3f8d8bca34f31ae06e97b017068ab43009230ac83cd95889909eceabbcfc86c"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/config.py",
+          "hash": "9d1071babb755f574e8759b9a7a2584b6931ba8d7a0a87df6dfc3b01de6fe299"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/health.py",
+          "hash": "4cd5affb9b3f0c046ea36aa1a3dfde09110d8a81de704a11e1d2aeb00ab47e2e"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/home.py",
+          "hash": "e0d3e4f8f7b3d62813a71eaf4018a7d7fa535166afa97dea6485279e45ee93a5"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/templates/home.html",
+          "hash": "2148c5b71ac4620be99b60ba08274fb01b3199da19ca4d8bba112365ced3244f"
+        }
+      ],
+      "generated_at": "2026-04-30T18:12:53.421170Z"
+    },
+    {
+      "name": "index",
+      "file": "index.md",
+      "source_files": [
+        {
+          "path": "README.md",
+          "hash": "0f11e188194c814d08b48ed131c03c9991c0c22727eb2cd661d588b0f9fbcdf9"
+        },
+        {
+          "path": "CONTEXT.md",
+          "hash": "e9aa8dd23bac069ca8c393857c3288c776554dad9c8125c2b135146347ac47dd"
+        },
+        {
+          "path": "pyproject.toml",
+          "hash": "6b374c2442845e2068b9fe85aee5c46b78377b7e4372981ead2566e4615573d2"
+        },
+        {
+          "path": "Dockerfile",
+          "hash": "da7e582640e988ea3fd12387b543540b05321c1b6031cda523b76e94e8fc90f0"
+        },
+        {
+          "path": "Containerfile",
+          "hash": "da7e582640e988ea3fd12387b543540b05321c1b6031cda523b76e94e8fc90f0"
+        },
+        {
+          "path": "compose.yml",
+          "hash": "bad5814abda11745f19bdf3ba1366fcea4ab2b86e23c7d2e0f0b5c7de848e98b"
+        },
+        {
+          "path": ".github/workflows/docker.yml",
+          "hash": "5d96d1786a623783c06992fea52ff8751b9e2d0ca3e8515702272e8b93f73d8c"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/server.py",
+          "hash": "f123aab73368cf2d7eb31d1caa7439f8dc3ab41c991900d46b89be72dd9f2ca4"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/factory.py",
+          "hash": "526ac1ef38d743eb5b26579d3e858011c7ebae4828f37da640d0da2c6fe592b0"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/health.py",
+          "hash": "4cd5affb9b3f0c046ea36aa1a3dfde09110d8a81de704a11e1d2aeb00ab47e2e"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/home.py",
+          "hash": "e0d3e4f8f7b3d62813a71eaf4018a7d7fa535166afa97dea6485279e45ee93a5"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/templates/home.html",
+          "hash": "2148c5b71ac4620be99b60ba08274fb01b3199da19ca4d8bba112365ced3244f"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/server_contracts.py",
+          "hash": "3924a648c226d596d92ddd1bb517e174e99a0da2337de445faef8d2f2ab47770"
+        }
+      ],
+      "generated_at": "2026-04-30T18:12:53.421351Z"
+    },
+    {
+      "name": "llm-context",
+      "file": "llm-context.md",
+      "source_files": [
+        {
+          "path": "README.md",
+          "hash": "0f11e188194c814d08b48ed131c03c9991c0c22727eb2cd661d588b0f9fbcdf9"
+        },
+        {
+          "path": "CONTEXT.md",
+          "hash": "e9aa8dd23bac069ca8c393857c3288c776554dad9c8125c2b135146347ac47dd"
+        },
+        {
+          "path": "pyproject.toml",
+          "hash": "6b374c2442845e2068b9fe85aee5c46b78377b7e4372981ead2566e4615573d2"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/server.py",
+          "hash": "f123aab73368cf2d7eb31d1caa7439f8dc3ab41c991900d46b89be72dd9f2ca4"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/config.py",
+          "hash": "9d1071babb755f574e8759b9a7a2584b6931ba8d7a0a87df6dfc3b01de6fe299"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/runtime_cli.py",
+          "hash": "e3f8d8bca34f31ae06e97b017068ab43009230ac83cd95889909eceabbcfc86c"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/factory.py",
+          "hash": "526ac1ef38d743eb5b26579d3e858011c7ebae4828f37da640d0da2c6fe592b0"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/tools.py",
+          "hash": "a27e244df701547229a10fa1cb0cd5ec6e46a875a35f30bd453a6bcab5b7cd84"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/health.py",
+          "hash": "4cd5affb9b3f0c046ea36aa1a3dfde09110d8a81de704a11e1d2aeb00ab47e2e"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/routes.py",
+          "hash": "4ae766a4527fc8e7c2c52f49c1cd7f6b9a3b8b7adc4d450cb8dd905029a28501"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/resources.py",
+          "hash": "839887e761d73125818cd60ef4ea3d8c0efd1f6da605676c1d1caae3e8bf0073"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/home.py",
+          "hash": "e0d3e4f8f7b3d62813a71eaf4018a7d7fa535166afa97dea6485279e45ee93a5"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/templates/home.html",
+          "hash": "2148c5b71ac4620be99b60ba08274fb01b3199da19ca4d8bba112365ced3244f"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/server_contracts.py",
+          "hash": "3924a648c226d596d92ddd1bb517e174e99a0da2337de445faef8d2f2ab47770"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/deckbuilding.py",
+          "hash": "5ed7ab93521cb0cae658a1951300d3e4a1e8e280fcb8d34817974e9804e880c3"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/card_search.py",
+          "hash": "84f089f63c065dede100b10eded386b4d84e8ba66f02adc2ab15f88ca6c2dd34"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/personal_decks.py",
+          "hash": "3cff683b34eb99dbd520a21052338a220dfd52fda5d84c1200a539a400fc51ac"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/schemas/accounts.py",
+          "hash": "84437e9eecaf2168e6d0b0f9fd294f6a6834bdbba5c34aa354e2d383c6554659"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/schemas/collections.py",
+          "hash": "21959a773096fa120c601d106360112ef9d73898c2631da3f4381808b5d1523b"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/schemas/decks.py",
+          "hash": "cde9e8065bd6122319265647883adf90cf4736fa8682e0cb7b9941a313728c04"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/schemas/search.py",
+          "hash": "c339b8c034f31790e650b127e98dfeec8205be6c06926c2375331f3aac3eb268"
+        }
+      ],
+      "generated_at": "2026-04-30T18:12:53.421685Z"
+    },
+    {
+      "name": "troubleshooting",
+      "file": "troubleshooting.md",
+      "source_files": [
+        {
+          "path": "README.md",
+          "hash": "0f11e188194c814d08b48ed131c03c9991c0c22727eb2cd661d588b0f9fbcdf9"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/http_helpers.py",
+          "hash": "28cd2a2a95a75a7af28fa2a2e9ed4a75ea6c6905d0732ee5d2971e4aa907e32c"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/health.py",
+          "hash": "4cd5affb9b3f0c046ea36aa1a3dfde09110d8a81de704a11e1d2aeb00ab47e2e"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/oauth.py",
+          "hash": "d8d5c8f3ded117fda493a3eba77b9affc64fac3e6e151e885de2c6f7341f980b"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/app/proxy.py",
+          "hash": "befb1bea9f54ab2a2b0fcc795915f976caca5c4ed1bbbf9c74116b43808f9d47"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/home.py",
+          "hash": "e0d3e4f8f7b3d62813a71eaf4018a7d7fa535166afa97dea6485279e45ee93a5"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/ui/templates/home.html",
+          "hash": "2148c5b71ac4620be99b60ba08274fb01b3199da19ca4d8bba112365ced3244f"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/config.py",
+          "hash": "9d1071babb755f574e8759b9a7a2584b6931ba8d7a0a87df6dfc3b01de6fe299"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/integrations/http_base.py",
+          "hash": "b4efb393ab48f011e87cfd1c52f0c74bdbf289ddb13d77faa5e32c312960f445"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/integrations/public_collection.py",
+          "hash": "7d5a5c769595a05ea6a337362f1fab31ffc7fb42f182fcd92b82fd4705eca65b"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/integrations/authenticated.py",
+          "hash": "229c9db716e4314866c836e893e10c5fea4af2f8cbe8bb3fb8533c4a41667e16"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/integrations/collection_cache.py",
+          "hash": "b30624cafc3a213268f0d71e6d9304abd7474fa1789dae70922128fcd4e730ad"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/integrations/request_gate.py",
+          "hash": "7ebdb3609c713563faaa74b867cab0816990dcdab039c78bb14e5ac6f0404096"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/auth/provider.py",
+          "hash": "4be56394a52f4f25df0b1f2cea8d9783252d37cf143dba5bb59f34e3fed6f08b"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/account_identity.py",
+          "hash": "feff1788baa6452fc0d3c5539e927fd06898ab93b72d099d8e188b7513005ba1"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/deckbuilding.py",
+          "hash": "5ed7ab93521cb0cae658a1951300d3e4a1e8e280fcb8d34817974e9804e880c3"
+        },
+        {
+          "path": "src/archidekt_commander_mcp/services/snapshot_cache.py",
+          "hash": "13dafb4e64939d3731deb8ccdd2aeb2d5a41af7f86ec77f1cae72248b6aa39ac"
+        },
+        {
+          "path": "tests/test_server.py",
+          "hash": "b9f738d8fc89b6b1dd1d8e3bb23dbcce12aa05c050ac5fd32f3a109516128f30"
+        }
+      ],
+      "generated_at": "2026-04-30T18:12:53.422059Z"
+    }
+  ]
+}

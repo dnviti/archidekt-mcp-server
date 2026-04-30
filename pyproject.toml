@@ -28,7 +28,7 @@ archidekt-commander-mcp = "archidekt_commander_mcp.server:main"
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-archidekt_commander_mcp = ["ui/templates/*.html"]
+archidekt_commander_mcp = ["ui/templates/*.html", "ui/static/*"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

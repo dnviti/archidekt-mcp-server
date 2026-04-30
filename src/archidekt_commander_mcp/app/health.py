@@ -5,7 +5,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from ..config import RuntimeSettings
-from ..ui.home import render_home_page
+from ..ui.home import render_home_page, ui_asset_response
 
 
 def health_payload(runtime: RuntimeSettings) -> dict[str, object]:
@@ -38,6 +38,14 @@ def register_home_and_health_routes(server: FastMCP, runtime: RuntimeSettings) -
     @server.custom_route("/", methods=["GET"])
     async def homepage(_: Request) -> Response:
         return HTMLResponse(render_home_page(runtime))
+
+    @server.custom_route("/favicon.ico", methods=["GET"])
+    async def favicon(_: Request) -> Response:
+        return ui_asset_response("favicon.ico")
+
+    @server.custom_route("/assets/{asset_name}", methods=["GET"])
+    async def ui_asset(request: Request) -> Response:
+        return ui_asset_response(str(request.path_params["asset_name"]))
 
     @server.custom_route("/health", methods=["GET"])
     async def health(_: Request) -> Response:

@@ -4,7 +4,7 @@ from mcp.types import ToolAnnotations
 
 
 SERVER_INSTRUCTIONS = """
-You are a stateless Commander deckbuilding MCP server.
+You are a stateless Archidekt deckbuilding MCP server.
 
 Collection and collection-search tools require a `collection` object containing one of:
 - `collection_id`
@@ -48,8 +48,8 @@ Stateless rules:
 - Collection quantities may be any positive integer.
 - For deck writes, quantity lives inside `modifications.quantity`, not as a top-level field on the card mutation.
 - Deck mutation quantities may be greater than 1 when needed.
-- For Commander decks, only basic lands should normally exceed 1 copy.
-- For non-Commander formats, basic lands may be unlimited and other cards should normally cap at 4 copies.
+- For singleton formats, only basic lands should normally exceed 1 copy.
+- For four-copy formats, basic lands may be unlimited and other cards should normally cap at 4 copies.
 - When applying deck writes, prefer one mutation with the exact final `quantity` instead of repeated duplicate adds.
 - For collection writes, provide `record_id` when updating an existing row; omitting `record_id` creates a new row.
 - Use `delete_collection_entries` with collection `record_id` values when removing cards from a collection row.
@@ -57,7 +57,7 @@ Stateless rules:
 - After an authenticated collection write, authenticated reads of that same self collection briefly bypass cached snapshots to reduce stale reads.
 
 Filter mapping:
-- Prefer `color_identity` for Commander logic.
+- Prefer `color_identity` when the user asks for color-identity-aware deckbuilding.
 - Use `type_includes`, `subtype_includes`, `supertypes_includes` and `oracle_terms_*`
   to express roles like ramp, draw, recursion, removal, board wipe and finisher.
 - For sorting, prefer the canonical pair `sort_by` plus `sort_direction` instead of shorthand fields.
@@ -86,8 +86,8 @@ Final response format:
 - Use a plain category heading, then list one card per line as `N Card Name`.
 - `N` must be the exact quantity of that card to add to the deck.
 - Do not default every card to `1`; choose quantities that match the deck format.
-- For Commander, use quantities above `1` only for basic lands.
-- For most non-Commander formats, use at most `4` copies of a non-basic card and allow unlimited basic lands.
+- For singleton formats, use quantities above `1` only for basic lands.
+- For most four-copy formats, use at most `4` copies of a non-basic card and allow unlimited basic lands.
 - Do not use bullets or numbering for card lines.
 - Example:
   Strategy Guide

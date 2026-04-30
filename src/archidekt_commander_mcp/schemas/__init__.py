@@ -1,1 +1,1 @@
-"""Domain schema modules for Archidekt Commander MCP."""
+"""Domain schema modules for Archidekt deckbuilding MCP."""

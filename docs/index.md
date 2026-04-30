@@ -23,7 +23,7 @@ source-files:
 
 # archidekt-mcp-server
 
-Stateless MCP server for Commander deckbuilding against Archidekt collections, personal decks, and Scryfall. It is built for chatbot-driven workflows where every collection request carries an explicit locator, the Web UI prepares a non-technical deckbuilding brief, and authenticated access can come from either an `account` payload or an MCP OAuth session.
+Stateless MCP server for deckbuilding against Archidekt collections, personal decks, and Scryfall. It is built for chatbot-driven workflows where every collection request carries an explicit locator, the Web UI prepares a non-technical deckbuilding brief, and authenticated access can come from either an `account` payload or an MCP OAuth session.
 
 ## ✦ Documentation Map
 
@@ -77,18 +77,27 @@ Open:
 - Health check: `http://127.0.0.1:8000/health`
 - MCP endpoint: `http://127.0.0.1:8000/mcp`
 
-The Web UI is a deckbuilding handoff page for non-technical users. It collects a collection locator, deck goal, commander/theme, budget, and safety preferences, then generates a prompt to paste into ChatGPT, Claude, or another MCP-capable chatbot.
+The Web UI is now a routed website for non-technical deckbuilders and hosts:
+
+- `/` overview and application map
+- `/deckbuilder` collection-aware deck prompt builder
+- `/connect` ChatGPT, Claude, and generic MCP connector guides
+- `/functions` readable catalog of exposed tools and HTTP helpers
+- `/account` browser Archidekt OAuth sign-in and private account helpers
+- `/host` runtime facts, health check, and public hosting checklist
+
+The site includes a persistent light/dark theme toggle and keeps the Archidekt-like compact card/list visual language.
 
 ## ◇ Why This Project Exists
 
-The server gives an LLM a deterministic tool layer for Commander deckbuilding. It avoids hidden server-side user state, normalizes Archidekt and Scryfall data into Pydantic models, and makes authenticated deck and collection writes explicit enough for clients to reason about safety before mutating a user account.
+The server gives an LLM a deterministic tool layer for Archidekt deckbuilding. It avoids hidden server-side user state, normalizes Archidekt and Scryfall data into Pydantic models, and makes authenticated deck and collection writes explicit enough for clients to reason about safety before mutating a user account.
 
 ## ✧ Runtime Shape
 
 ```mermaid
 flowchart LR
     User[Chatbot or Web UI user] --> MCP[MCP tools and HTTP helper routes]
-    Browser[Non-technical browser user] --> UI[Deckbuilding Web UI and favicon assets]
+    Browser[Browser user] --> UI[Multi-page Web UI, dark mode, OAuth, favicon assets]
     UI --> MCP
     MCP --> Service[DeckbuildingService]
     Service --> Archidekt[Archidekt public and authenticated APIs]

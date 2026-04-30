@@ -38,7 +38,7 @@ source-files:
 
 ## ✦ Purpose And Rationale
 
-`archidekt-mcp-server` is a stateless MCP and HTTP service for Commander deckbuilding. Its core design decision is to keep user identity and collection context out of process-global state: collection tools require a `collection` object, and private tools require either an explicit `account` payload or the current MCP OAuth session.
+`archidekt-mcp-server` is a stateless MCP and HTTP service for Archidekt deckbuilding. Its core design decision is to keep user identity and collection context out of process-global state: collection tools require a `collection` object, and private tools require either an explicit `account` payload or the current MCP OAuth session.
 
 This keeps LLM workflows reproducible. A model can inspect the exact tool payload, know which collection or account is being used, and avoid accidentally applying a prior user's state to a new request.
 
@@ -72,7 +72,7 @@ flowchart TD
 | Runtime settings | Loads `ARCHIDEKT_MCP_` environment variables and validates bounds | `src/archidekt_commander_mcp/config.py` |
 | CLI | Builds argparse flags and starts the selected MCP transport | `src/archidekt_commander_mcp/runtime_cli.py` |
 | MCP Server Assembly | Wires FastMCP, auth, routes, resources, tools, lifecycle, and proxy handling | `src/archidekt_commander_mcp/app/factory.py` |
-| Web UI | Renders the non-technical deckbuilding brief builder, chatbot connection guides, generated logo, and favicon assets | `src/archidekt_commander_mcp/ui/home.py`, `src/archidekt_commander_mcp/ui/templates/home.html` |
+| Web UI | Renders the routed website, deckbuilding brief builder, connector guides, functions catalog, browser Archidekt login controls, host page, generated logo, and favicon assets | `src/archidekt_commander_mcp/ui/home.py`, `src/archidekt_commander_mcp/ui/templates/home.html` |
 | Service Provider | Lazily creates one `DeckbuildingService` and closes it on shutdown | `src/archidekt_commander_mcp/app/service_provider.py` |
 | Deckbuilding Service | Coordinates Archidekt, Scryfall, Redis cache, OAuth identity, deck workflows, and search workflows | `src/archidekt_commander_mcp/services/deckbuilding.py` |
 | Integration clients | Encapsulate remote API calls, rate limits, retries, and payload mapping | `src/archidekt_commander_mcp/integrations/` |
@@ -125,7 +125,7 @@ sequenceDiagram
     ToolRoute-->>Client: JSON result
 ```
 
-HTTP routes use `_handle_api_request()` in `src/archidekt_commander_mcp/app/http_helpers.py` to parse JSON, validate Pydantic payloads, map common errors, and return JSON responses. The `/` route renders a user-facing deck request builder, while `/favicon.ico` and `/assets/{asset_name}` serve the generated Web UI icon files. MCP tools call the same service methods directly and return `model_dump(mode="json")`.
+HTTP routes use `_handle_api_request()` in `src/archidekt_commander_mcp/app/http_helpers.py` to parse JSON, validate Pydantic payloads, map common errors, and return JSON responses. The `/`, `/deckbuilder`, `/connect`, `/functions`, `/account`, and `/host` routes render the same packaged Web UI shell and client-side page state, while `/favicon.ico` and `/assets/{asset_name}` serve the generated Web UI icon files. MCP tools call the same service methods directly and return `model_dump(mode="json")`.
 
 ## 🔐 Authenticated Access
 
@@ -168,7 +168,7 @@ The code mirrors those boundaries with `ArchidektAccountIdentity`, `CollectionCa
 
 1. Load settings from environment or CLI.
 2. Create FastMCP with `streamable-http` at `/mcp` by default.
-3. Register `/`, `/favicon.ico`, `/assets/{asset_name}`, `/health`, `/api/*`, OAuth routes, MCP resources, and MCP tools.
+3. Register website routes (`/`, `/deckbuilder`, `/connect`, `/functions`, `/account`, `/host`), `/favicon.ico`, `/assets/{asset_name}`, `/health`, `/api/*`, OAuth routes, MCP resources, and MCP tools.
 4. Lazily instantiate `DeckbuildingService` on the first tool or route call.
 5. Resolve account identity only when authenticated data or writes require it.
 6. Fetch or refresh collection/deck/catalog data through integration clients.

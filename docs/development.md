@@ -60,7 +60,7 @@ python -m unittest discover -s tests -v
 
 | File | Coverage area |
 |---|---|
-| `tests/test_server.py` | Route inventory, Web UI rendering, favicon/static assets, OAuth routes, health, proxy headers, API error mapping, CLI flags, runtime env, tool roster, annotations, auth/session/cache/mutation behavior |
+| `tests/test_server.py` | Route inventory, routed Web UI rendering, dark-mode/OAuth Web UI assertions, favicon/static assets, OAuth routes, health, proxy headers, API error mapping, CLI flags, runtime env, tool roster, annotations, auth/session/cache/mutation behavior |
 | `tests/test_filters.py` | Color normalization, Scryfall query building, filter matching, sorting aliases, result ordering |
 | `tests/support.py` | Fake Redis, fake Archidekt/Scryfall clients, token-scoped helpers, TTL helpers |
 

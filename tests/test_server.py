@@ -122,6 +122,11 @@ class HttpRouteTests(unittest.TestCase):
             route_paths,
             {
                 "/",
+                "/deckbuilder",
+                "/connect",
+                "/functions",
+                "/account",
+                "/host",
                 "/favicon.ico",
                 "/assets/{asset_name}",
                 "/health",
@@ -189,6 +194,15 @@ class HttpRouteTests(unittest.TestCase):
         self.assertEqual(logo.status_code, 200)
         self.assertEqual(logo.headers["content-type"], "image/png")
         self.assertEqual(missing.status_code, 404)
+
+    def test_website_pages_render_shared_webui(self) -> None:
+        server = create_server(RuntimeSettings())
+        client = TestClient(server.streamable_http_app())
+
+        for path in ["/", "/deckbuilder", "/connect", "/functions", "/account", "/host"]:
+            response = client.get(path)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Archidekt Deck Assistant", response.text)
 
     def test_trusted_proxy_headers_update_request_client_host(self) -> None:
         async def client_ip(request: Any) -> JSONResponse:
@@ -559,27 +573,41 @@ class RuntimeSettingsEnvTests(unittest.TestCase):
 
 
 class WebUiTests(unittest.TestCase):
-    def test_oauth_enabled_page_guides_nontechnical_deckbuilding_chatbot_flow(self) -> None:
+    def test_oauth_enabled_page_renders_multipage_site_with_login_and_theme_toggle(self) -> None:
         html = render_home_page(RuntimeSettings(auth_enabled=True))
         self.assertNotIn("Account JSON", html)
         self.assertNotIn("Test Auth Login", html)
         self.assertNotIn("Filters JSON", html)
         self.assertNotIn("API Test Result", html)
-        self.assertNotIn("window.localStorage", html)
 
         self.assertIn("/favicon.ico", html)
         self.assertIn("/assets/logo-generated.png", html)
+        self.assertIn('href="/deckbuilder"', html)
+        self.assertIn('href="/connect"', html)
+        self.assertIn('href="/functions"', html)
+        self.assertIn('href="/account"', html)
+        self.assertIn('href="/host"', html)
+        self.assertIn('id="theme-toggle"', html)
+        self.assertIn("archidekt-webui-theme", html)
         self.assertIn("Your Archidekt Collection", html)
-        self.assertIn("What Do You Want To Build?", html)
-        self.assertIn("Connect Your Chatbot", html)
+        self.assertIn("Deck Goal", html)
+        self.assertIn("Chatbot Connectors", html)
+        self.assertIn("Application Functions", html)
+        self.assertIn("Archidekt Account", html)
+        self.assertIn("Host And Runtime", html)
+        self.assertIn("Connect Archidekt", html)
         self.assertIn("ChatGPT", html)
         self.assertIn("Claude", html)
         self.assertIn("Copy This Request", html)
         self.assertIn('const authEnabled = true;', html)
+        self.assertIn('const oauthScope = "archidekt.account";', html)
+        self.assertIn("archidekt-webui-oauth-session", html)
+        self.assertNotIn('class=\\\\"muted', html)
+        self.assertIn("function connectAuth()", html)
         self.assertIn("new URL(mcpPath, window.location.origin)", html)
         self.assertIn("function buildDeckBrief()", html)
-        self.assertIn("Private Archidekt sign-in is available when your chatbot connects", html)
-        self.assertIn("For Commander, use more than 1 copy only for basic lands.", html)
+        self.assertIn("Archidekt sign-in is available on the Account page", html)
+        self.assertIn("In singleton formats, use more than 1 copy only for basic lands.", html)
         self.assertIn("wait for my explicit confirmation", html)
 
     def test_server_instructions_explain_quantity_rules(self) -> None:
@@ -587,7 +615,7 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("quantity lives inside `modifications.quantity`", SERVER_INSTRUCTIONS)
         self.assertIn("provide `record_id` when updating an existing row", SERVER_INSTRUCTIONS)
         self.assertIn("Use `delete_collection_entries`", SERVER_INSTRUCTIONS)
-        self.assertIn("For Commander decks, only basic lands should normally exceed 1 copy.", SERVER_INSTRUCTIONS)
+        self.assertIn("For singleton formats, only basic lands should normally exceed 1 copy.", SERVER_INSTRUCTIONS)
         self.assertIn("use at most `4` copies of a non-basic card", SERVER_INSTRUCTIONS)
 
     def test_quantity_fields_expose_copy_rule_descriptions(self) -> None:
@@ -605,7 +633,7 @@ class WebUiTests(unittest.TestCase):
         )
 
         self.assertIn("Values greater than 1 are allowed.", deck_quantity_description)
-        self.assertIn("Commander decks", deck_quantity_description)
+        self.assertIn("singleton formats", deck_quantity_description)
         self.assertIn("4 copies or fewer", deck_quantity_description)
         self.assertIn("Any positive integer is allowed.", collection_quantity_description)
         self.assertIn("update an existing row", collection_record_id_description)

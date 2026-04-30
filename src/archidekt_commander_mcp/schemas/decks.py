@@ -11,16 +11,16 @@ from .search import _normalize_optional_text, _normalize_string_list
 
 _DECK_FORMAT_DESCRIPTION = (
     "Archidekt numeric deck format id. Quantity rules depend on this format: "
-    "Commander decks are singleton except for basic lands, while most other formats "
-    "normally allow up to 4 copies of a non-basic card and unlimited basic lands."
+    "singleton formats usually allow one copy of each non-basic card, while many constructed "
+    "formats normally allow up to 4 copies of a non-basic card and unlimited basic lands."
 )
 
 _DECK_MUTATION_QUANTITY_DESCRIPTION = (
     "Exact quantity for this deck card after the mutation. Values greater than 1 are allowed. "
     "On `modify`, a quantity of 0 means remove the card from the deck. "
-    "For Commander decks, only basic lands should normally exceed 1 copy. "
-    "For non-Commander formats, non-basic cards should normally stay at 4 copies or fewer, "
-    "while basic lands may be unlimited."
+    "For singleton formats, only basic lands should normally exceed 1 copy. "
+    "For four-copy formats, non-basic cards should normally stay at 4 copies or fewer, "
+    "while basic lands may be unlimited when the format allows it."
 )
 
 

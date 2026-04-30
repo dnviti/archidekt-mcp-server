@@ -1,6 +1,6 @@
 # archidekt-mcp-server
 
-Stateless MCP server for Commander deckbuilding against Archidekt collections, personal decks, and Scryfall.
+Stateless MCP server for deckbuilding against Archidekt collections, personal decks, and Scryfall.
 
 The server is designed for LLM-driven workflows:
 

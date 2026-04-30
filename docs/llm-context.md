@@ -45,7 +45,7 @@ source-files:
 
 ## ◇ Project Summary
 
-This is a stateless MCP server for Commander deckbuilding against Archidekt collections, personal decks, and Scryfall. It exposes MCP tools, HTTP helper routes, an English Web UI for non-technical deckbuilders, generated favicon/logo assets, and optional MCP OAuth for remote clients.
+This is a stateless MCP server for deckbuilding against Archidekt collections, personal decks, and Scryfall. It exposes MCP tools, HTTP helper routes, an English Web UI for non-technical deckbuilders, generated favicon/logo assets, and optional MCP OAuth for remote clients.
 
 The server never assumes a remembered collection. Every collection-related call requires a `collection` object. Authenticated private reads and writes require either an `account` object or an MCP OAuth session.
 
@@ -190,9 +190,12 @@ Default OAuth behavior stores access tokens, refresh tokens, session records, an
 
 ## 🌐 Web UI Summary
 
-- `/` renders a non-technical deckbuilding page for users who want to create or improve Commander decks from Archidekt collections.
-- The page collects collection locator, deck goal, commander/theme, budget, existing deck URL, owned-card preference, and write-confirmation preference.
+- `/`, `/deckbuilder`, `/connect`, `/functions`, `/account`, and `/host` render a routed website for users who want to create or improve decks from Archidekt collections.
+- The page collects collection locator, deck goal, format/theme, budget, existing deck URL, owned-card preference, and write-confirmation preference.
 - It generates a deckbuilding prompt and shows ChatGPT, Claude, and generic connector steps for the server's `/mcp` URL.
+- `/functions` lists the major MCP tools and HTTP helpers in user-facing language.
+- `/account` restores browser Archidekt OAuth sign-in and can load authenticated account or personal deck JSON through the HTTP helper routes.
+- The theme toggle persists light/dark mode in browser local storage.
 - `/favicon.ico` and `/assets/{asset_name}` serve allowlisted generated logo/favicon assets included as package data.
 - ChatGPT and Claude cloud connectors need a public HTTPS server URL; localhost URLs are only useful for local browser testing.
 
@@ -242,6 +245,6 @@ docker compose down
 - Pass `collection` on every collection-related tool call.
 - Reuse `account` returned by `login_archidekt` when not using MCP OAuth.
 - Use `archidekt_card_ids` and `archidekt_record_ids` returned by tools instead of guessing ids.
-- For Commander, only basic lands should normally exceed one copy.
+- For singleton formats, only basic lands should normally exceed one copy.
 - Before collection-only deck writes, call `check_collection_card_availability` and avoid cards with `must_not_use=true` or `enough_copies=false`.
 - Prefer canonical sorting: `sort_by` plus `sort_direction`.

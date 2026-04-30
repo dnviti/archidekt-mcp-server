@@ -27,6 +27,7 @@ def render_home_page(settings: RuntimeSettings) -> str:
         cache_ttl=settings.cache_ttl_seconds,
         mcp_path=settings.streamable_http_path,
         mcp_path_json=json.dumps(settings.streamable_http_path),
+        oauth_scope=json.dumps("archidekt.account"),
         stateless_http="yes" if settings.stateless_http else "no",
         transport=settings.transport,
     )

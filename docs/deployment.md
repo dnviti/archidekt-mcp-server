@@ -180,6 +180,11 @@ Check routes in a running app by opening:
 
 ```text
 http://127.0.0.1:8000/
+http://127.0.0.1:8000/deckbuilder
+http://127.0.0.1:8000/connect
+http://127.0.0.1:8000/functions
+http://127.0.0.1:8000/account
+http://127.0.0.1:8000/host
 http://127.0.0.1:8000/favicon.ico
 http://127.0.0.1:8000/mcp
 ```

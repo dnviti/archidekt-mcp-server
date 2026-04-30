@@ -38,6 +38,8 @@ For Web UI issues, also check:
 
 ```bash
 curl -I http://127.0.0.1:8000/
+curl -I http://127.0.0.1:8000/deckbuilder
+curl -I http://127.0.0.1:8000/account
 curl -I http://127.0.0.1:8000/favicon.ico
 ```
 
@@ -117,6 +119,7 @@ Protect Redis because it can contain Archidekt tokens and, by default, login-ren
 | ChatGPT or Claude cannot connect to the URL copied from the Web UI | The page was opened on `localhost` or `127.0.0.1` | Deploy the same server behind public HTTPS and copy that URL instead |
 | Browser favicon is missing | Static package data or asset route is missing | Confirm `src/archidekt_commander_mcp/ui/static/favicon.ico` exists and `GET /favicon.ico` returns `200` |
 | Chatbot can browse public collections but cannot read private decks or write changes | OAuth is disabled or the chatbot has not connected through OAuth | Enable `ARCHIDEKT_MCP_AUTH_ENABLED=true`, set `ARCHIDEKT_MCP_PUBLIC_BASE_URL`, and reconnect the chatbot |
+| Dark mode preference is not retained | Browser local storage was cleared or blocked | Toggle the theme again; the preference is stored under `archidekt-webui-theme` |
 
 ## 🗃 Cache Issues
 

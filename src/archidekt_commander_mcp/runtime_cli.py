@@ -30,7 +30,7 @@ def configure_logging(level_name: str) -> str:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     env_settings = RuntimeSettings()
-    parser = argparse.ArgumentParser(description="Archidekt Commander MCP server")
+    parser = argparse.ArgumentParser(description="Archidekt deckbuilding MCP server")
     parser.add_argument(
         "--transport",
         choices=["stdio", "sse", "streamable-http"],

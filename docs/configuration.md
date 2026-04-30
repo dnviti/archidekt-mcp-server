@@ -44,7 +44,7 @@ CLI flags in `src/archidekt_commander_mcp/runtime_cli.py` override selected sett
 
 Set a real contact in `ARCHIDEKT_MCP_USER_AGENT` when exposing the server publicly.
 
-The Python package also includes Web UI templates and generated static assets through `pyproject.toml` package data: `ui/templates/*.html` and `ui/static/*`. Those files back `/`, `/favicon.ico`, and `/assets/{asset_name}`.
+The Python package also includes Web UI templates and generated static assets through `pyproject.toml` package data: `ui/templates/*.html` and `ui/static/*`. Those files back the routed website (`/`, `/deckbuilder`, `/connect`, `/functions`, `/account`, `/host`), `/favicon.ico`, and `/assets/{asset_name}`.
 
 ## 🗃 Cache And Rate Settings
 

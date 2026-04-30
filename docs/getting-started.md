@@ -85,7 +85,15 @@ Open:
 - Health check: `http://127.0.0.1:8000/health`
 - MCP endpoint: `http://127.0.0.1:8000/mcp`
 
-The Web UI is meant for deckbuilders, not server operators. A user enters their Archidekt collection, chooses a Commander deck goal, copies the generated deckbuilding request, and follows the ChatGPT, Claude, or other connector guide shown on the page.
+The Web UI is meant for deckbuilders first and server operators second. It exposes:
+
+- `/deckbuilder` for collection-aware deck requests
+- `/connect` for ChatGPT, Claude, and other connector setup
+- `/functions` for a readable feature catalog
+- `/account` for Archidekt OAuth sign-in and private deck helpers
+- `/host` for health and hosting information
+
+The theme toggle persists light/dark mode in browser storage.
 
 ## ⇄ Startup Sequence
 

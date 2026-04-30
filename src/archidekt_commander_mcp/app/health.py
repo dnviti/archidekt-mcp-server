@@ -8,6 +8,9 @@ from ..config import RuntimeSettings
 from ..ui.home import render_home_page, ui_asset_response
 
 
+_WEBSITE_ROUTES = ("/", "/deckbuilder", "/connect", "/functions", "/account", "/host")
+
+
 def health_payload(runtime: RuntimeSettings) -> dict[str, object]:
     return {
         "status": "ok",
@@ -35,9 +38,11 @@ def health_payload(runtime: RuntimeSettings) -> dict[str, object]:
 
 
 def register_home_and_health_routes(server: FastMCP, runtime: RuntimeSettings) -> None:
-    @server.custom_route("/", methods=["GET"])
     async def homepage(_: Request) -> Response:
         return HTMLResponse(render_home_page(runtime))
+
+    for route_path in _WEBSITE_ROUTES:
+        server.custom_route(route_path, methods=["GET"])(homepage)
 
     @server.custom_route("/favicon.ico", methods=["GET"])
     async def favicon(_: Request) -> Response:

@@ -1,4 +1,4 @@
-"""Archidekt Commander MCP server."""
+"""Archidekt deckbuilding MCP server."""
 
 __all__ = ["__version__"]
 

@@ -143,6 +143,11 @@ HTTP API routes are stateless helper surfaces for the same service methods. They
 | Route | Method | Pydantic request model | Service method |
 |---|---|---|---|
 | `/` | GET | None | `render_home_page(runtime)` |
+| `/deckbuilder` | GET | None | `render_home_page(runtime)` |
+| `/connect` | GET | None | `render_home_page(runtime)` |
+| `/functions` | GET | None | `render_home_page(runtime)` |
+| `/account` | GET | None | `render_home_page(runtime)` |
+| `/host` | GET | None | `render_home_page(runtime)` |
 | `/favicon.ico` | GET | None | `ui_asset_response("favicon.ico")` |
 | `/assets/{asset_name}` | GET | None | `ui_asset_response(asset_name)` |
 | `/health` | GET | None | `health_payload(runtime)` |
@@ -161,7 +166,7 @@ HTTP API routes are stateless helper surfaces for the same service methods. They
 | `/api/search-unowned` | POST | `CollectionSearchRequest` | `search_unowned_cards()` |
 | `/auth/archidekt-login` | GET/POST | Form/query | OAuth Archidekt login page when auth is enabled |
 
-The Web UI is a non-technical deckbuilding page. It collects a collection locator, deck goal, commander/theme, budget, and safety preferences, then generates a prompt plus ChatGPT, Claude, and generic MCP connector steps. Browser assets are intentionally allowlisted to generated favicon/logo files.
+The Web UI is a multi-page browser site. It collects a collection locator, deck goal, format/theme, budget, and safety preferences; generates a chatbot prompt; documents ChatGPT, Claude, and generic MCP connector setup; catalogs available functions; exposes browser Archidekt OAuth sign-in on `/account`; and includes a persistent light/dark theme toggle. Browser assets are intentionally allowlisted to generated favicon/logo files.
 
 Example HTTP owned-card search:
 

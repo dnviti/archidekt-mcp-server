@@ -173,7 +173,7 @@ def register_mcp_tools(
             "Add, modify, or remove cards in a personal Archidekt deck. Use `search_archidekt_cards`, "
             "`search_owned_cards`, or `get_personal_deck_cards` first to resolve the needed ids. "
             "Use `modifications.quantity` for the exact copy count when a card should appear more than once. "
-            "Commander decks should normally keep non-basic cards at one copy, while non-Commander decks "
+            "Singleton formats should normally keep non-basic cards at one copy, while four-copy formats "
             "usually cap non-basic cards at four copies and allow unlimited basic lands. If the user has "
             "asked to use only collection cards, call `check_collection_card_availability` first and do not "
             "add cards where `must_not_use=true` or `enough_copies=false`."

@@ -229,6 +229,7 @@ $env:ARCHIDEKT_MCP_ARCHIDEKT_RETRY_MAX_ATTEMPTS = "3"
 $env:ARCHIDEKT_MCP_ARCHIDEKT_RETRY_BASE_DELAY_SECONDS = "1.0"
 $env:ARCHIDEKT_MCP_ARCHIDEKT_EXACT_NAME_CACHE_TTL_SECONDS = "900"
 $env:ARCHIDEKT_MCP_USER_AGENT = "archidekt-mcp-server/0.3 (+mailto:you@example.com)"
+$env:ARCHIDEKT_MCP_FORWARDED_ALLOW_IPS = "127.0.0.1"
 # Optional MCP OAuth for ChatGPT / remote clients:
 # $env:ARCHIDEKT_MCP_AUTH_ENABLED = "true"
 # $env:ARCHIDEKT_MCP_PUBLIC_BASE_URL = "https://your-public-domain"
@@ -304,6 +305,7 @@ The app service uses environment variables instead of a long command override:
 
 - `ARCHIDEKT_MCP_REDIS_URL`
 - `ARCHIDEKT_MCP_USER_AGENT`
+- `ARCHIDEKT_MCP_FORWARDED_ALLOW_IPS`, set to `*` in the bundled compose file so access logs use the client IP from trusted reverse proxy headers
 - plus image defaults for host, port, transport, and cache TTL
 
 ## GitHub Actions
@@ -350,6 +352,7 @@ Because the server is stateless, the model must pass `collection` on every call.
 - `--scryfall-max-pages`
 - `--user-agent`
 - `--streamable-http-path`
+- `--forwarded-allow-ips`
 
 The same runtime options can also be provided as environment variables with the `ARCHIDEKT_MCP_` prefix, for example:
 
@@ -360,11 +363,13 @@ The same runtime options can also be provided as environment variables with the 
 - `ARCHIDEKT_MCP_CACHE_TTL_SECONDS`
 - `ARCHIDEKT_MCP_PERSONAL_DECK_CACHE_TTL_SECONDS`
 - `ARCHIDEKT_MCP_AUTH_PERSIST_LOGIN_CREDENTIALS`
+- `ARCHIDEKT_MCP_FORWARDED_ALLOW_IPS`
 - `ARCHIDEKT_MCP_USER_AGENT`
 
 ## Notes
 
 - Set a real contact in the `User-Agent` when exposing the server publicly.
+- When running behind a reverse proxy, set `ARCHIDEKT_MCP_FORWARDED_ALLOW_IPS` to that proxy's IP/CIDR list, or `*` only when every direct connection reaches the app through a trusted proxy.
 - Redis is the cache backend. The server no longer uses local file-based collection snapshots.
 - Authenticated collection snapshots and personal deck overlap data are cached in Redis with account-scoped keys.
 - MCP OAuth sessions are stored in Redis as access-token, refresh-token, and session records with no automatic expiration, so restarting the Python service does not force every user to sign in again if the Redis volume is still intact.

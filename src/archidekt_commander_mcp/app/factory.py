@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import httpx
 import redis.asyncio as redis_async
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.fastmcp import FastMCP
 from pydantic import AnyHttpUrl
+from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from ..auth.pages import render_archidekt_authorize_page
 from ..auth.provider import AUTH_SCOPE, RedisArchidektOAuthProvider
@@ -25,6 +27,30 @@ from .http_helpers import _compact_optional_text
 from .resources import register_resources
 from .routes import register_http_routes
 from .tools import register_mcp_tools
+
+
+class ProxyHeaderFastMCP(FastMCP):
+    def __init__(
+        self,
+        *args: Any,
+        forwarded_allow_ips: str,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._forwarded_allow_ips = forwarded_allow_ips
+
+    def streamable_http_app(self) -> Starlette:
+        return self._apply_proxy_header_middleware(super().streamable_http_app())
+
+    def sse_app(self, mount_path: str | None = None) -> Starlette:
+        return self._apply_proxy_header_middleware(super().sse_app(mount_path))
+
+    def _apply_proxy_header_middleware(self, app: Starlette) -> Starlette:
+        app.add_middleware(
+            ProxyHeadersMiddleware,
+            trusted_hosts=self._forwarded_allow_ips,
+        )
+        return app
 
 
 def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
@@ -87,7 +113,7 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
                 await auth_redis_client.aclose()
             LOGGER.info("Shutting down Archidekt Commander MCP server")
 
-    server = FastMCP(
+    server = ProxyHeaderFastMCP(
         name="archidekt-commander",
         instructions=SERVER_INSTRUCTIONS,
         website_url="https://archidekt.com",
@@ -103,6 +129,7 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
         lifespan=lifespan,
         auth=auth_settings,
         auth_server_provider=auth_provider,
+        forwarded_allow_ips=runtime.forwarded_allow_ips,
     )
 
     async def get_service() -> DeckbuildingService:

@@ -17,6 +17,7 @@ from mcp.server.auth.provider import AuthorizationParams
 from mcp.shared.auth import OAuthClientInformationFull
 from pydantic import ValidationError
 import httpx
+from starlette.responses import JSONResponse
 from starlette.testclient import TestClient
 
 from archidekt_commander_mcp.clients import ArchidektAuthenticatedClient, ArchidektRequestGate, CollectionCache, ScryfallClient
@@ -147,6 +148,40 @@ class HttpRouteTests(unittest.TestCase):
         response = client.get("/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
+
+    def test_trusted_proxy_headers_update_request_client_host(self) -> None:
+        async def client_ip(request: Any) -> JSONResponse:
+            return JSONResponse({"client_host": request.client.host if request.client else None})
+
+        server = create_server(RuntimeSettings(forwarded_allow_ips="10.0.0.2"))
+        app = server.streamable_http_app()
+        app.add_route("/debug-client-ip", client_ip, methods=["GET"])
+        client = TestClient(app, client=("10.0.0.2", 50000))
+
+        response = client.get(
+            "/debug-client-ip",
+            headers={"X-Forwarded-For": "203.0.113.9, 10.0.0.2"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["client_host"], "203.0.113.9")
+
+    def test_untrusted_proxy_headers_do_not_update_request_client_host(self) -> None:
+        async def client_ip(request: Any) -> JSONResponse:
+            return JSONResponse({"client_host": request.client.host if request.client else None})
+
+        server = create_server(RuntimeSettings(forwarded_allow_ips="127.0.0.1"))
+        app = server.streamable_http_app()
+        app.add_route("/debug-client-ip", client_ip, methods=["GET"])
+        client = TestClient(app, client=("10.0.0.2", 50000))
+
+        response = client.get(
+            "/debug-client-ip",
+            headers={"X-Forwarded-For": "203.0.113.9, 10.0.0.2"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["client_host"], "10.0.0.2")
 
     def test_post_only_api_routes_reject_get_with_405(self) -> None:
         server = create_server(RuntimeSettings())
@@ -322,6 +357,7 @@ class RuntimeCliContractTests(unittest.TestCase):
                 "--scryfall-max-pages",
                 "--user-agent",
                 "--streamable-http-path",
+                "--forwarded-allow-ips",
             }.issubset(option_strings)
         )
 
@@ -355,6 +391,8 @@ class RuntimeCliContractTests(unittest.TestCase):
                 "archidekt-mcp-test/1.0",
                 "--streamable-http-path",
                 "/custom-mcp",
+                "--forwarded-allow-ips",
+                "10.0.0.0/8,172.16.0.0/12",
             ]
         )
 
@@ -373,6 +411,7 @@ class RuntimeCliContractTests(unittest.TestCase):
         self.assertEqual(settings.scryfall_max_pages, 8)
         self.assertEqual(settings.user_agent, "archidekt-mcp-test/1.0")
         self.assertEqual(settings.streamable_http_path, "/custom-mcp")
+        self.assertEqual(settings.forwarded_allow_ips, "10.0.0.0/8,172.16.0.0/12")
 
 
 class RuntimeSettingsEnvTests(unittest.TestCase):
@@ -385,6 +424,7 @@ class RuntimeSettingsEnvTests(unittest.TestCase):
                 "ARCHIDEKT_MCP_REDIS_URL": "redis://redis:6379/5",
                 "ARCHIDEKT_MCP_CACHE_TTL_SECONDS": "1234",
                 "ARCHIDEKT_MCP_PERSONAL_DECK_CACHE_TTL_SECONDS": "222",
+                "ARCHIDEKT_MCP_FORWARDED_ALLOW_IPS": "10.0.0.0/8,172.16.0.0/12",
             },
             clear=False,
         ):
@@ -395,6 +435,7 @@ class RuntimeSettingsEnvTests(unittest.TestCase):
         self.assertEqual(settings.redis_url, "redis://redis:6379/5")
         self.assertEqual(settings.cache_ttl_seconds, 1234)
         self.assertEqual(settings.personal_deck_cache_ttl_seconds, 222)
+        self.assertEqual(settings.forwarded_allow_ips, "10.0.0.0/8,172.16.0.0/12")
 
     def test_accepts_non_expiring_auth_ttls_from_environment(self) -> None:
         with patch.dict(

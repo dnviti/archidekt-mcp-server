@@ -977,6 +977,73 @@ class OAuthProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await redis_client.ttl(provider._key("refresh-token", token.refresh_token or "")), -1)
         self.assertEqual(await redis_client.ttl(provider._key("session", access.session_id)), -1)
 
+    async def test_oauth_session_stores_login_credentials_and_replaces_archidekt_token(self) -> None:
+        redis_client = FakeRedis()
+        provider = RedisArchidektOAuthProvider(
+            redis_client,
+            key_prefix="archidekt-commander",
+            issuer_url="http://127.0.0.1:8000",
+        )
+        client = OAuthClientInformationFull(
+            client_id="client-1",
+            client_secret="secret",
+            redirect_uris=["https://chat.openai.com/a/oauth/callback"],
+            token_endpoint_auth_method="client_secret_post",
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+            scope=AUTH_SCOPE,
+        )
+        await provider.register_client(client)
+
+        redirect_to_form = await provider.authorize(
+            client,
+            AuthorizationParams(
+                state="state-123",
+                scopes=[AUTH_SCOPE],
+                code_challenge="pkce-challenge",
+                redirect_uri="https://chat.openai.com/a/oauth/callback",
+                redirect_uri_provided_explicitly=True,
+                resource="http://127.0.0.1:8000/mcp",
+            ),
+        )
+        request_id = parse_qs(urlparse(redirect_to_form).query)["request_id"][0]
+        redirect_back = await provider.complete_authorization(
+            request_id,
+            AuthenticatedAccount(token="arch-token", username="tester", user_id=123),
+            login_account=ArchidektAccount(username="tester", password="hunter2"),
+        )
+        code = parse_qs(urlparse(redirect_back).query)["code"][0]
+        loaded_code = await provider.load_authorization_code(client, code)
+        assert loaded_code is not None
+
+        token = await provider.exchange_authorization_code(client, loaded_code)
+        access = await provider.load_access_token(token.access_token)
+        assert access is not None
+        session = await provider.load_session(access.session_id)
+        assert session is not None
+        self.assertEqual(session.archidekt_login_identifier, "tester")
+        self.assertEqual(session.archidekt_login_identifier_type, "username")
+        self.assertEqual(session.archidekt_login_password, "hunter2")
+
+        updated_session = await provider.replace_archidekt_session_token(
+            access.session_id,
+            archidekt_token="arch-token-renewed",
+            archidekt_username="tester-renewed",
+            archidekt_user_id=456,
+        )
+        assert updated_session is not None
+        self.assertEqual(updated_session.archidekt_token, "arch-token-renewed")
+        self.assertEqual(updated_session.archidekt_login_password, "hunter2")
+
+        updated_access = await provider.load_access_token(token.access_token)
+        updated_refresh = await provider.load_refresh_token(client, token.refresh_token or "")
+        assert updated_access is not None
+        assert updated_refresh is not None
+        self.assertEqual(updated_access.archidekt_token, "arch-token-renewed")
+        self.assertIsNone(updated_access.archidekt_login_password)
+        self.assertEqual(updated_refresh.archidekt_token, "arch-token-renewed")
+        self.assertEqual(updated_refresh.archidekt_login_identifier, "tester")
+
     async def test_default_refresh_does_not_revoke_active_access_token(self) -> None:
         redis_client = FakeRedis()
         provider = RedisArchidektOAuthProvider(
@@ -1445,6 +1512,51 @@ class ArchidektCatalogSearchTests(unittest.IsolatedAsyncioTestCase):
                 "Accept": "application/json",
             },
         )
+
+    async def test_authenticated_request_renews_archidekt_token_after_401(self) -> None:
+        seen_authorizations: list[str | None] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            seen_authorizations.append(request.headers.get("Authorization"))
+            if len(seen_authorizations) == 1:
+                return httpx.Response(401, json={"detail": "expired"}, request=request)
+            return httpx.Response(
+                200,
+                json={"id": 99, "name": "Renewed Deck"},
+                request=request,
+            )
+
+        async def renew_account(account: AuthenticatedAccount) -> AuthenticatedAccount:
+            self.assertEqual(account.token, "old-token")
+            return AuthenticatedAccount(
+                token="new-token",
+                username=account.username,
+                user_id=account.user_id,
+                auth_session_id=account.auth_session_id,
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = ArchidektAuthenticatedClient(
+                http_client,
+                RuntimeSettings(),
+                renew_account=renew_account,
+            )
+            account = AuthenticatedAccount(
+                token="old-token",
+                username="tester",
+                user_id=123,
+                auth_session_id="session-1",
+            )
+
+            payload, summary = await client.create_deck(
+                account,
+                PersonalDeckCreateInput(name="Renewed Deck", deck_format=3),
+            )
+
+        self.assertEqual(payload["id"], 99)
+        self.assertIsNotNone(summary)
+        self.assertEqual(account.token, "new-token")
+        self.assertEqual(seen_authorizations, ["JWT old-token", "JWT new-token"])
 
     async def test_private_snapshot_reuses_redis_cache_across_services(self) -> None:
         snapshot = CollectionSnapshot(

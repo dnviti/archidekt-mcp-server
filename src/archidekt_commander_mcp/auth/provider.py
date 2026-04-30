@@ -16,7 +16,7 @@ from mcp.server.auth.provider import (
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
-from ..schemas.accounts import AuthenticatedAccount
+from ..schemas.accounts import ArchidektAccount, AuthenticatedAccount
 from .records import (
     ArchidektAccessToken,
     ArchidektAuthorizationCode,
@@ -89,6 +89,7 @@ class RedisArchidektOAuthProvider(
         self,
         request_id: str,
         account: AuthenticatedAccount,
+        login_account: ArchidektAccount | None = None,
     ) -> str:
         pending = await self.get_pending_request(request_id)
         if pending is None:
@@ -110,6 +111,7 @@ class RedisArchidektOAuthProvider(
             archidekt_token=account.token,
             archidekt_username=account.username,
             archidekt_user_id=account.user_id,
+            **self._login_credential_payload(login_account),
         )
         await self._store_json(
             self._key("auth-code", code_value),
@@ -158,6 +160,9 @@ class RedisArchidektOAuthProvider(
             archidekt_token=authorization_code.archidekt_token,
             archidekt_username=authorization_code.archidekt_username,
             archidekt_user_id=authorization_code.archidekt_user_id,
+            archidekt_login_identifier=authorization_code.archidekt_login_identifier,
+            archidekt_login_identifier_type=authorization_code.archidekt_login_identifier_type,
+            archidekt_login_password=authorization_code.archidekt_login_password,
         )
         await self.redis.delete(self._key("auth-code", authorization_code.code))
         await self._store_session(session["access"], session["refresh"], session["record"])
@@ -213,6 +218,9 @@ class RedisArchidektOAuthProvider(
             archidekt_token=refresh_token.archidekt_token,
             archidekt_username=refresh_token.archidekt_username,
             archidekt_user_id=refresh_token.archidekt_user_id,
+            archidekt_login_identifier=refresh_token.archidekt_login_identifier,
+            archidekt_login_identifier_type=refresh_token.archidekt_login_identifier_type,
+            archidekt_login_password=refresh_token.archidekt_login_password,
         )
         await self._store_session(rotated["access"], rotated["refresh"], rotated["record"])
         return OAuthToken(
@@ -262,6 +270,53 @@ class RedisArchidektOAuthProvider(
         _, _, normalized_session = await self._migrate_session_to_non_expiring(session=session)
         return normalized_session or session
 
+    async def replace_archidekt_session_token(
+        self,
+        session_id: str,
+        *,
+        archidekt_token: str,
+        archidekt_username: str | None = None,
+        archidekt_user_id: int | None = None,
+    ) -> AuthSessionRecord | None:
+        session_payload = await self._load_json(self._key("session", session_id))
+        if session_payload is None:
+            return None
+
+        session = AuthSessionRecord.model_validate(session_payload)
+        update = {
+            "archidekt_token": archidekt_token,
+            "archidekt_username": archidekt_username or session.archidekt_username,
+            "archidekt_user_id": (
+                archidekt_user_id if archidekt_user_id is not None else session.archidekt_user_id
+            ),
+        }
+        session = session.model_copy(update=update)
+
+        access_key = self._key("access-token", session.access_token)
+        access_payload = await self._load_json(access_key)
+        if access_payload is not None:
+            access_token = ArchidektAccessToken.model_validate(access_payload).model_copy(
+                update={
+                    **update,
+                    "archidekt_login_identifier": None,
+                    "archidekt_login_identifier_type": None,
+                    "archidekt_login_password": None,
+                }
+            )
+            await self._store_json_preserving_ttl(access_key, access_token.model_dump(mode="json"))
+
+        refresh_key = self._key("refresh-token", session.refresh_token)
+        refresh_payload = await self._load_json(refresh_key)
+        if refresh_payload is not None:
+            refresh_token = ArchidektRefreshToken.model_validate(refresh_payload).model_copy(update=update)
+            await self._store_json_preserving_ttl(refresh_key, refresh_token.model_dump(mode="json"))
+
+        await self._store_json_preserving_ttl(
+            self._key("session", session.session_id),
+            session.model_dump(mode="json"),
+        )
+        return session
+
     def _build_session(
         self,
         *,
@@ -271,6 +326,9 @@ class RedisArchidektOAuthProvider(
         archidekt_token: str,
         archidekt_username: str | None,
         archidekt_user_id: int | None,
+        archidekt_login_identifier: str | None = None,
+        archidekt_login_identifier_type: str | None = None,
+        archidekt_login_password: str | None = None,
     ) -> dict[str, Any]:
         session_id = secrets.token_urlsafe(24)
         access_token_value = secrets.token_urlsafe(32)
@@ -298,6 +356,9 @@ class RedisArchidektOAuthProvider(
             archidekt_username=archidekt_username,
             archidekt_user_id=archidekt_user_id,
             session_id=session_id,
+            archidekt_login_identifier=archidekt_login_identifier,
+            archidekt_login_identifier_type=archidekt_login_identifier_type,
+            archidekt_login_password=archidekt_login_password,
         )
         record = AuthSessionRecord(
             session_id=session_id,
@@ -312,6 +373,9 @@ class RedisArchidektOAuthProvider(
             archidekt_token=archidekt_token,
             archidekt_username=archidekt_username,
             archidekt_user_id=archidekt_user_id,
+            archidekt_login_identifier=archidekt_login_identifier,
+            archidekt_login_identifier_type=archidekt_login_identifier_type,
+            archidekt_login_password=archidekt_login_password,
         )
         return {"access": access, "refresh": refresh, "record": record}
 
@@ -435,6 +499,38 @@ class RedisArchidektOAuthProvider(
             ex=ex,
         )
 
+    async def _store_json_preserving_ttl(self, key: str, payload: dict[str, Any]) -> None:
+        ttl_seconds: int | None = None
+        ttl = await self.redis.ttl(key)
+        if ttl > 0:
+            ttl_seconds = ttl
+        await self._store_json(key, payload, ex=ttl_seconds)
+
+    def _login_credential_payload(self, account: ArchidektAccount | None) -> dict[str, str | None]:
+        if account is None or not account.password:
+            return {
+                "archidekt_login_identifier": None,
+                "archidekt_login_identifier_type": None,
+                "archidekt_login_password": None,
+            }
+        if account.email:
+            return {
+                "archidekt_login_identifier": account.email,
+                "archidekt_login_identifier_type": "email",
+                "archidekt_login_password": account.password,
+            }
+        if account.username:
+            return {
+                "archidekt_login_identifier": account.username,
+                "archidekt_login_identifier_type": "username",
+                "archidekt_login_password": account.password,
+            }
+        return {
+            "archidekt_login_identifier": None,
+            "archidekt_login_identifier_type": None,
+            "archidekt_login_password": None,
+        }
+
 
 def account_from_access_token(access_token: AccessToken | None) -> AuthenticatedAccount | None:
     if access_token is None:
@@ -446,4 +542,5 @@ def account_from_access_token(access_token: AccessToken | None) -> Authenticated
         token=str(archidekt_token),
         username=getattr(access_token, "archidekt_username", None),
         user_id=getattr(access_token, "archidekt_user_id", None),
+        auth_session_id=getattr(access_token, "session_id", None),
     )

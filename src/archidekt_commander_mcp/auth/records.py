@@ -21,6 +21,9 @@ class ArchidektAuthorizationCode(AuthorizationCode):
     archidekt_token: str
     archidekt_username: str | None = None
     archidekt_user_id: int | None = None
+    archidekt_login_identifier: str | None = None
+    archidekt_login_identifier_type: str | None = None
+    archidekt_login_password: str | None = None
 
 
 class ArchidektRefreshToken(RefreshToken):
@@ -28,6 +31,9 @@ class ArchidektRefreshToken(RefreshToken):
     archidekt_username: str | None = None
     archidekt_user_id: int | None = None
     session_id: str
+    archidekt_login_identifier: str | None = None
+    archidekt_login_identifier_type: str | None = None
+    archidekt_login_password: str | None = None
 
 
 class ArchidektAccessToken(AccessToken):
@@ -35,6 +41,9 @@ class ArchidektAccessToken(AccessToken):
     archidekt_username: str | None = None
     archidekt_user_id: int | None = None
     session_id: str
+    archidekt_login_identifier: str | None = None
+    archidekt_login_identifier_type: str | None = None
+    archidekt_login_password: str | None = None
 
 
 class AuthSessionRecord(BaseModel):
@@ -50,3 +59,6 @@ class AuthSessionRecord(BaseModel):
     archidekt_token: str
     archidekt_username: str | None = None
     archidekt_user_id: int | None = None
+    archidekt_login_identifier: str | None = None
+    archidekt_login_identifier_type: str | None = None
+    archidekt_login_password: str | None = None

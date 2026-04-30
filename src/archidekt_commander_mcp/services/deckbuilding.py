@@ -9,6 +9,7 @@ from typing import Any, Callable
 import httpx
 import redis.asyncio as redis_async
 
+from ..auth.provider import RedisArchidektOAuthProvider
 from ..config import RuntimeSettings
 from ..filtering import (
     aggregate_owned_results,
@@ -127,8 +128,25 @@ class DeckbuildingService:
             headers={"User-Agent": settings.user_agent},
         )
         self.redis_client = redis_async.from_url(settings.redis_url, decode_responses=True)
+        self.oauth_provider = (
+            RedisArchidektOAuthProvider(
+                self.redis_client,
+                key_prefix=settings.redis_key_prefix,
+                issuer_url=settings.normalized_public_base_url or "",
+                auth_code_ttl_seconds=settings.auth_code_ttl_seconds,
+                access_token_ttl_seconds=settings.auth_access_token_ttl_seconds,
+                refresh_token_ttl_seconds=settings.auth_refresh_token_ttl_seconds,
+            )
+            if settings.auth_enabled
+            else None
+        )
         self.archidekt_client = ArchidektPublicCollectionClient(self.http_client, settings)
-        self.auth_client = ArchidektAuthenticatedClient(self.http_client, settings, redis_client=self.redis_client)
+        self.auth_client = ArchidektAuthenticatedClient(
+            self.http_client,
+            settings,
+            redis_client=self.redis_client,
+            renew_account=self._renew_archidekt_account,
+        )
         self.scryfall_client = ScryfallClient(self.http_client, settings)
         self.cache = CollectionCache(
             self.archidekt_client,
@@ -141,6 +159,81 @@ class DeckbuildingService:
         self._authenticated_deck_list_cache: dict[str, tuple[datetime, AuthenticatedDeckListSnapshot]] = {}
         self._personal_deck_usage_cache: dict[str, tuple[datetime, PersonalDeckUsageSnapshot]] = {}
         self._recent_collection_write_markers: dict[str, datetime] = {}
+
+    async def _renew_archidekt_account(
+        self,
+        account: AuthenticatedAccount,
+    ) -> AuthenticatedAccount | None:
+        if self.oauth_provider is None or not account.auth_session_id:
+            return None
+
+        try:
+            session = await self.oauth_provider.load_session(account.auth_session_id)
+            if (
+                session is None
+                or not session.archidekt_login_identifier
+                or not session.archidekt_login_password
+            ):
+                return None
+
+            login_account = (
+                ArchidektAccount(
+                    email=session.archidekt_login_identifier,
+                    password=session.archidekt_login_password,
+                )
+                if session.archidekt_login_identifier_type == "email"
+                else ArchidektAccount(
+                    username=session.archidekt_login_identifier,
+                    password=session.archidekt_login_password,
+                )
+            )
+            renewed = await self.auth_client.login(login_account)
+            updated_session = await self.oauth_provider.replace_archidekt_session_token(
+                session.session_id,
+                archidekt_token=renewed.token,
+                archidekt_username=renewed.username,
+                archidekt_user_id=renewed.user_id,
+            )
+            if updated_session is None:
+                return None
+            LOGGER.info(
+                "Renewed Archidekt login token for OAuth session %s",
+                updated_session.session_id,
+            )
+            return AuthenticatedAccount(
+                token=updated_session.archidekt_token,
+                username=updated_session.archidekt_username,
+                user_id=updated_session.archidekt_user_id,
+                auth_session_id=updated_session.session_id,
+            )
+        except Exception as error:
+            LOGGER.warning(
+                "Archidekt login renewal failed for OAuth session %s: %s",
+                account.auth_session_id,
+                error,
+            )
+            return None
+
+    async def _renew_after_archidekt_auth_failure(
+        self,
+        account: AuthenticatedAccount,
+        error: Exception,
+    ) -> AuthenticatedAccount | None:
+        if not self._is_archidekt_auth_failure(error):
+            return None
+        renewed = await self._renew_archidekt_account(account)
+        if renewed is None:
+            return None
+        account.token = renewed.token
+        account.username = renewed.username or account.username
+        account.user_id = renewed.user_id if renewed.user_id is not None else account.user_id
+        account.auth_session_id = renewed.auth_session_id or account.auth_session_id
+        return account
+
+    def _is_archidekt_auth_failure(self, error: Exception) -> bool:
+        if isinstance(error, httpx.HTTPStatusError):
+            return error.response.status_code in {401, 403}
+        return isinstance(error, RuntimeError) and "server-side redirect" in str(error)
 
     def _lock_for_key(self, key: str) -> asyncio.Lock:
         return _lock_for_key_impl(self, key)
@@ -321,10 +414,23 @@ class DeckbuildingService:
                 if cached_snapshot is not None:
                     return cached_snapshot
 
-            snapshot = await self.archidekt_client.fetch_snapshot(
-                collection,
-                auth_token=resolved_account.token,
-            )
+            try:
+                snapshot = await self.archidekt_client.fetch_snapshot(
+                    collection,
+                    auth_token=resolved_account.token,
+                )
+            except Exception as error:
+                renewed_account = await self._renew_after_archidekt_auth_failure(
+                    resolved_account,
+                    error,
+                )
+                if renewed_account is None:
+                    raise
+                resolved_account = renewed_account
+                snapshot = await self.archidekt_client.fetch_snapshot(
+                    collection,
+                    auth_token=resolved_account.token,
+                )
             await self._store_private_cache(
                 self._private_snapshot_cache,
                 "collection",

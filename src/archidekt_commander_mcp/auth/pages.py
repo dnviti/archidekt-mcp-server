@@ -7,6 +7,7 @@ def render_archidekt_authorize_page(
     *,
     request_id: str,
     error_message: str | None = None,
+    persist_login_credentials: bool = True,
 ) -> str:
     error_block = ""
     if error_message:
@@ -16,6 +17,15 @@ def render_archidekt_authorize_page(
             f"{html.escape(error_message)}</p>"
         )
     escaped_request_id = html.escape(request_id)
+    credential_note = (
+        "The MCP server stores the resulting Archidekt token, OAuth session, and Archidekt "
+        "login credential in Redis so it can renew the Archidekt token later. Keep Redis "
+        "private and persistent, and disconnect the app to revoke this session."
+        if persist_login_credentials
+        else "The password is used only during this authorization step. The MCP server "
+        "stores the resulting Archidekt token and OAuth session in Redis, but login renewal "
+        "is disabled on this deployment."
+    )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -99,7 +109,7 @@ def render_archidekt_authorize_page(
       </label>
       <button type="submit">Continue</button>
     </form>
-    <p class="note">The password is used only to perform the Archidekt login during this authorization step. The MCP server stores the resulting Archidekt token and OAuth session in Redis, not the raw password, and keeps the session until you revoke it or clear Redis.</p>
+    <p class="note">{credential_note}</p>
   </main>
 </body>
 </html>"""

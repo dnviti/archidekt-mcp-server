@@ -13,7 +13,7 @@ The server is designed for LLM-driven workflows:
 - collection snapshots are cached in Redis for 24 hours by default
 - authenticated collection snapshots, personal deck overlap data, and optional MCP OAuth state are also cached in Redis by default
 - personal deck cache TTL defaults to 900 seconds; Archidekt request budgets default to 30 requests per 60 seconds, 3 retries, 1 second retry backoff, and 900 seconds for exact-name lookups
-- OAuth access tokens, refresh tokens, and session records are stored in Redis without a TTL, so authenticated MCP logins remain valid until they are explicitly revoked or Redis data is cleared
+- OAuth access tokens, refresh tokens, session records, and the Archidekt login credential are stored in Redis without a TTL by default, so authenticated MCP logins can be renewed until they are explicitly revoked or Redis data is cleared
 
 ## What It Exposes
 
@@ -124,9 +124,9 @@ Required notes:
 
 - `ARCHIDEKT_MCP_PUBLIC_BASE_URL` must be the public base URL ChatGPT reaches, without the `/mcp` suffix
 - when auth is enabled, the MCP endpoint stays at `/mcp`, but ChatGPT will also use `/.well-known/oauth-authorization-server`, `/authorize`, `/token`, `/register`, `/revoke`, and `/auth/archidekt-login`
-- the authorization page asks for Archidekt username/email plus password once, exchanges that for an Archidekt token, and stores the resulting Archidekt token in Redis-backed OAuth state
-- raw passwords are used only during the authorization step and are not persisted in Redis
-- with the bundled `compose.yml`, Redis uses append-only persistence on the `redis-data` volume, so OAuth logins survive MCP service restarts and remain valid until disconnect/revocation as long as that volume is preserved
+- the authorization page asks for Archidekt username/email plus password once, exchanges that for an Archidekt token, and stores the resulting Archidekt token plus login credential in Redis-backed OAuth state
+- by default, the login credential is retained so the MCP server can re-login to Archidekt and replace an invalid Archidekt token without asking the user to sign in again; set `ARCHIDEKT_MCP_AUTH_PERSIST_LOGIN_CREDENTIALS=false` to disable renewal and return to token-only persistence
+- with the bundled `compose.yml`, Redis uses append-only persistence on the `redis-data` volume, so OAuth logins and renewal state survive MCP service restarts and remain valid until disconnect/revocation as long as that volume is preserved
 
 After the app is connected through OAuth, private MCP tools can omit `account`, for example:
 
@@ -359,6 +359,7 @@ The same runtime options can also be provided as environment variables with the 
 - `ARCHIDEKT_MCP_REDIS_URL`
 - `ARCHIDEKT_MCP_CACHE_TTL_SECONDS`
 - `ARCHIDEKT_MCP_PERSONAL_DECK_CACHE_TTL_SECONDS`
+- `ARCHIDEKT_MCP_AUTH_PERSIST_LOGIN_CREDENTIALS`
 - `ARCHIDEKT_MCP_USER_AGENT`
 
 ## Notes
@@ -367,5 +368,5 @@ The same runtime options can also be provided as environment variables with the 
 - Redis is the cache backend. The server no longer uses local file-based collection snapshots.
 - Authenticated collection snapshots and personal deck overlap data are cached in Redis with account-scoped keys.
 - MCP OAuth sessions are stored in Redis as access-token, refresh-token, and session records with no automatic expiration, so restarting the Python service does not force every user to sign in again if the Redis volume is still intact.
-- The cache stores fetched Archidekt data, OAuth session state, and Archidekt tokens, but not raw passwords. Reuse the returned `account.token` after login instead of resending credentials when you are not using MCP OAuth.
+- When `ARCHIDEKT_MCP_AUTH_PERSIST_LOGIN_CREDENTIALS` is enabled, Redis also stores the Archidekt login credential for silent Archidekt token renewal. Protect the Redis instance and volume accordingly. Reuse the returned `account.token` after login instead of resending credentials when you are not using MCP OAuth.
 - The server is stateless with respect to user identity and collection context. Always pass the locator explicitly.

@@ -141,6 +141,7 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
                 "oauth_refresh_token_ttl_seconds": runtime.auth_refresh_token_ttl_seconds,
                 "oauth_access_token_persistent": runtime.auth_access_token_ttl_seconds is None,
                 "oauth_refresh_token_persistent": runtime.auth_refresh_token_ttl_seconds is None,
+                "oauth_archidekt_login_renewal_enabled": runtime.auth_persist_login_credentials,
             }
         )
 
@@ -155,6 +156,7 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
                         render_archidekt_authorize_page(
                             request_id="",
                             error_message="The MCP authorization request is missing a request id.",
+                            persist_login_credentials=runtime.auth_persist_login_credentials,
                         ),
                         status_code=400,
                     )
@@ -164,10 +166,16 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
                         render_archidekt_authorize_page(
                             request_id=request_id,
                             error_message="This MCP authorization request is missing or has expired. Start the app connection again from ChatGPT.",
+                            persist_login_credentials=runtime.auth_persist_login_credentials,
                         ),
                         status_code=400,
                     )
-                return HTMLResponse(render_archidekt_authorize_page(request_id=request_id))
+                return HTMLResponse(
+                    render_archidekt_authorize_page(
+                        request_id=request_id,
+                        persist_login_credentials=runtime.auth_persist_login_credentials,
+                    )
+                )
 
             form = await request.form()
             request_id = _compact_optional_text(form.get("request_id"))
@@ -178,6 +186,7 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
                     render_archidekt_authorize_page(
                         request_id="",
                         error_message="The MCP authorization request is missing a request id.",
+                        persist_login_credentials=runtime.auth_persist_login_credentials,
                     ),
                     status_code=400,
                 )
@@ -186,6 +195,7 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
                     render_archidekt_authorize_page(
                         request_id=request_id,
                         error_message="Archidekt username/email and password are both required.",
+                        persist_login_credentials=runtime.auth_persist_login_credentials,
                     ),
                     status_code=400,
                 )
@@ -195,6 +205,7 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
                     render_archidekt_authorize_page(
                         request_id=request_id,
                         error_message="This MCP authorization request is missing or has expired. Start the app connection again from ChatGPT.",
+                        persist_login_credentials=runtime.auth_persist_login_credentials,
                     ),
                     status_code=400,
                 )
@@ -211,12 +222,17 @@ def create_server(runtime_settings: RuntimeSettings | None = None) -> FastMCP:
                 ) as auth_http_client:
                     auth_client = ArchidektAuthenticatedClient(auth_http_client, runtime)
                     resolved_account = await auth_client.login(login_account)
-                redirect_url = await auth_provider.complete_authorization(request_id, resolved_account)
+                redirect_url = await auth_provider.complete_authorization(
+                    request_id,
+                    resolved_account,
+                    login_account=login_account if runtime.auth_persist_login_credentials else None,
+                )
             except Exception as error:
                 return HTMLResponse(
                     render_archidekt_authorize_page(
                         request_id=request_id,
                         error_message=f"Archidekt login failed: {error}",
+                        persist_login_credentials=runtime.auth_persist_login_credentials,
                     ),
                     status_code=400,
                 )

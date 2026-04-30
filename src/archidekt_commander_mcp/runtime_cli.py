@@ -103,6 +103,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=env_settings.streamable_http_path,
         help="HTTP path used by the streamable-http MCP transport.",
     )
+    parser.add_argument(
+        "--forwarded-allow-ips",
+        default=env_settings.forwarded_allow_ips,
+        help=(
+            "Comma-separated trusted proxy IPs/CIDRs for X-Forwarded-* headers, "
+            "or '*' to trust all proxies. Default: 127.0.0.1."
+        ),
+    )
     return parser
 
 
@@ -121,6 +129,7 @@ def build_runtime_settings_from_args(args: argparse.Namespace) -> RuntimeSetting
         scryfall_max_pages=args.scryfall_max_pages,
         user_agent=args.user_agent,
         streamable_http_path=args.streamable_http_path,
+        forwarded_allow_ips=args.forwarded_allow_ips,
     )
 
 

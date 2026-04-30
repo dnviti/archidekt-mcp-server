@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Awaitable, Callable
 from urllib.parse import urlencode
 
 import httpx
@@ -43,9 +43,11 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         settings,
         request_gate: ArchidektRequestGate | None = None,
         redis_client: redis_async.Redis | None = None,
+        renew_account: Callable[[AuthenticatedAccount], Awaitable[AuthenticatedAccount | None]] | None = None,
     ) -> None:
         super().__init__(http_client, settings, request_gate=request_gate)
         self.redis = redis_client
+        self.renew_account = renew_account
         self._exact_name_search_cache: dict[
             str,
             tuple[
@@ -58,8 +60,6 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         if account.token and account.password is None:
             return AuthenticatedAccount(
                 token=account.token,
-                username=account.username,
-                user_id=account.user_id,
             )
 
         payload: dict[str, Any] = {"password": account.password}
@@ -94,13 +94,6 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         if not account.token:
             return await self.login(account)
 
-        if account.username or account.user_id is not None:
-            return AuthenticatedAccount(
-                token=account.token,
-                username=account.username,
-                user_id=account.user_id,
-            )
-
         recent_decks = await self._fetch_curated_self(account.token)
         inferred_username = recent_decks[0].owner_username if recent_decks else None
         inferred_user_id = recent_decks[0].owner_id if recent_decks else None
@@ -117,12 +110,17 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
     ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
         resolved = await self._coerce_account(account)
 
-        recent_decks = await self._fetch_curated_self(resolved.token)
-        if resolved.username is None and recent_decks:
+        recent_decks: list[PersonalDeckSummary] = []
+        if resolved.username is None or resolved.user_id is None:
+            resolved, recent_decks = await self._fetch_curated_self_for_account(resolved)
             resolved = resolved.model_copy(
                 update={
-                    "username": recent_decks[0].owner_username,
-                    "user_id": recent_decks[0].owner_id,
+                    "username": resolved.username or (recent_decks[0].owner_username if recent_decks else None),
+                    "user_id": (
+                        resolved.user_id
+                        if resolved.user_id is not None
+                        else (recent_decks[0].owner_id if recent_decks else None)
+                    ),
                 }
             )
 
@@ -142,10 +140,11 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         )
         decks: list[PersonalDeckSummary] = []
         while next_url:
-            response = await self._request_archidekt(
+            resolved, response = await self._request_authenticated(
+                resolved,
                 "GET",
                 next_url,
-                headers=_auth_headers(resolved.token),
+                headers_factory=_auth_headers,
             )
             response.raise_for_status()
             payload = response.json()
@@ -161,6 +160,41 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
             decks = recent_decks
 
         return resolved, _dedupe_personal_decks(decks)
+
+    async def _request_authenticated(
+        self,
+        account: ArchidektAccount | AuthenticatedAccount,
+        method: str,
+        url: str,
+        *,
+        headers_factory: Callable[[str | None], dict[str, str]],
+        **kwargs: Any,
+    ) -> tuple[AuthenticatedAccount, httpx.Response]:
+        resolved = await self._coerce_account(account)
+        response = await self._request_archidekt(
+            method,
+            url,
+            headers=headers_factory(resolved.token),
+            **kwargs,
+        )
+        if response.status_code not in {401, 403} or self.renew_account is None:
+            return resolved, response
+
+        renewed = await self.renew_account(resolved)
+        if renewed is None:
+            return resolved, response
+
+        resolved.token = renewed.token
+        resolved.username = renewed.username or resolved.username
+        resolved.user_id = renewed.user_id if renewed.user_id is not None else resolved.user_id
+        resolved.auth_session_id = renewed.auth_session_id or resolved.auth_session_id
+        retry_response = await self._request_archidekt(
+            method,
+            url,
+            headers=headers_factory(resolved.token),
+            **kwargs,
+        )
+        return resolved, retry_response
 
     async def search_cards(
         self,
@@ -346,13 +380,13 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         deck_id: int,
         include_deleted: bool = False,
     ) -> dict[str, Any]:
-        resolved = await self._coerce_account(account)
         include_deleted_flag = "1" if include_deleted else "0"
-        response = await self._request_archidekt(
+        _, response = await self._request_authenticated(
+            account,
             "GET",
             f"{self.settings.normalized_archidekt_base_url}/api/decks/{deck_id}/v2/cards/",
             params={"includeDeleted": include_deleted_flag},
-            headers=_auth_headers(resolved.token),
+            headers_factory=_auth_headers,
         )
         response.raise_for_status()
         payload = response.json()
@@ -365,12 +399,12 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         account: ArchidektAccount | AuthenticatedAccount,
         deck: PersonalDeckCreateInput,
     ) -> tuple[dict[str, Any], PersonalDeckSummary | None]:
-        resolved = await self._coerce_account(account)
-        response = await self._request_archidekt(
+        _, response = await self._request_authenticated(
+            account,
             "POST",
             f"{self.settings.normalized_archidekt_base_url}/api/decks/v2/",
             json=self._deck_create_payload(deck),
-            headers=_json_headers(resolved.token),
+            headers_factory=_json_headers,
         )
         response.raise_for_status()
         payload = _ensure_mapping(response.json(), "Archidekt deck create")
@@ -382,12 +416,12 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         deck_id: int,
         deck: PersonalDeckUpdateInput,
     ) -> tuple[dict[str, Any], PersonalDeckSummary | None]:
-        resolved = await self._coerce_account(account)
-        response = await self._request_archidekt(
+        _, response = await self._request_authenticated(
+            account,
             "PATCH",
             f"{self.settings.normalized_archidekt_base_url}/api/decks/v2/{deck_id}/",
             json=self._deck_update_payload(deck),
-            headers=_json_headers(resolved.token),
+            headers_factory=_json_headers,
         )
         response.raise_for_status()
         payload = _ensure_mapping(response.json(), "Archidekt deck update")
@@ -398,11 +432,11 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         account: ArchidektAccount | AuthenticatedAccount,
         deck_id: int,
     ) -> dict[str, Any]:
-        resolved = await self._coerce_account(account)
-        response = await self._request_archidekt(
+        _, response = await self._request_authenticated(
+            account,
             "DELETE",
             f"{self.settings.normalized_archidekt_base_url}/api/decks/{deck_id}/v2/",
-            headers=_json_headers(resolved.token),
+            headers_factory=_json_headers,
         )
         response.raise_for_status()
         return _ensure_mapping(response.json(), "Archidekt deck delete")
@@ -413,19 +447,19 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         deck_id: int,
         cards: list[PersonalDeckCardMutation],
     ) -> dict[str, Any]:
-        resolved = await self._coerce_account(account)
         payload_cards = [
             self._deck_card_mutation_payload(card, index)
             for index, card in enumerate(cards, start=1)
         ]
         endpoint = f"{self.settings.normalized_archidekt_base_url}/api/decks/{deck_id}/modifyCards/v2/"
-        headers = _json_headers(resolved.token)
-        response = await self._request_archidekt(
+        resolved, response = await self._request_authenticated(
+            account,
             "PATCH",
             endpoint,
             json={"cards": payload_cards},
-            headers=headers,
+            headers_factory=_json_headers,
         )
+        headers = _json_headers(resolved.token)
         if response.status_code < 400:
             return _ensure_mapping(response.json(), "Archidekt deck card modification")
 
@@ -487,7 +521,6 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         account: ArchidektAccount | AuthenticatedAccount,
         entry: CollectionCardUpsert,
     ) -> dict[str, Any]:
-        resolved = await self._coerce_account(account)
         if entry.record_id is None:
             method = "POST"
             endpoint = f"{self.settings.normalized_archidekt_base_url}/api/collection/v2/"
@@ -497,11 +530,12 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
                 f"{self.settings.normalized_archidekt_base_url}/api/collection/v2/{entry.record_id}/"
             )
 
-        response = await self._request_archidekt(
+        _, response = await self._request_authenticated(
+            account,
             method,
             endpoint,
             json=self._collection_upsert_payload(entry),
-            headers=_json_headers(resolved.token),
+            headers_factory=_json_headers,
         )
         response.raise_for_status()
         return _ensure_mapping(response.json(), "Archidekt collection upsert")
@@ -511,12 +545,12 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         account: ArchidektAccount | AuthenticatedAccount,
         record_ids: list[int],
     ) -> dict[str, Any]:
-        resolved = await self._coerce_account(account)
-        response = await self._request_archidekt(
+        _, response = await self._request_authenticated(
+            account,
             "DELETE",
             f"{self.settings.normalized_archidekt_base_url}/api/collection/bulk/",
             content=json.dumps({"ids": [int(record_id) for record_id in record_ids]}),
-            headers=_json_headers(resolved.token),
+            headers_factory=_json_headers,
         )
         response.raise_for_status()
         try:
@@ -534,8 +568,22 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
             headers=_auth_headers(token),
         )
         response.raise_for_status()
-        payload = response.json()
+        return self._map_curated_self_payload(response.json())
 
+    async def _fetch_curated_self_for_account(
+        self,
+        account: AuthenticatedAccount,
+    ) -> tuple[AuthenticatedAccount, list[PersonalDeckSummary]]:
+        resolved, response = await self._request_authenticated(
+            account,
+            "GET",
+            f"{self.settings.normalized_archidekt_base_url}/api/decks/curated/self/",
+            headers_factory=_auth_headers,
+        )
+        response.raise_for_status()
+        return resolved, self._map_curated_self_payload(response.json())
+
+    def _map_curated_self_payload(self, payload: Any) -> list[PersonalDeckSummary]:
         if isinstance(payload, dict):
             raw_results = payload.get("results") or payload.get("decks") or []
         elif isinstance(payload, list):

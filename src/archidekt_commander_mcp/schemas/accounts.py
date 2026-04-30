@@ -108,6 +108,7 @@ class AuthenticatedAccount(BaseModel):
     token: str
     username: str | None = None
     user_id: int | None = Field(default=None, ge=1)
+    auth_session_id: str | None = Field(default=None, exclude=True)
 
 
 class CollectionOverviewRequest(BaseModel):

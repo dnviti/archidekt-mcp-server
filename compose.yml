@@ -24,6 +24,7 @@ services:
     environment:
       ARCHIDEKT_MCP_REDIS_URL: redis://redis:6379/0
       ARCHIDEKT_MCP_USER_AGENT: archidekt-mcp-server/0.3 (+mailto:replace-me@example.com)
+      ARCHIDEKT_MCP_FORWARDED_ALLOW_IPS: "*"
     healthcheck:
       test:
         - CMD

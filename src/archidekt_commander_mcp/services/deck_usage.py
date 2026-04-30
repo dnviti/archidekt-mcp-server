@@ -98,8 +98,17 @@ async def _get_personal_deck_usage_snapshot(
     account: AuthenticatedAccount,
     force_refresh: bool = False,
 ) -> PersonalDeckUsageSnapshot:
-    cache_key = service._private_usage_cache_key(account)
+    resolved_account: AuthenticatedAccount | None = None
+    decks: list[PersonalDeckSummary] | None = None
+    cache_account = account
+    if cache_account.username is None or cache_account.user_id is None:
+        resolved_account, decks = await service._get_authenticated_deck_list(account)
+        cache_account = resolved_account
+
+    cache_key = service._private_usage_cache_key(cache_account)
     async with service._lock_for_key(cache_key):
+        if not force_refresh and service._has_personal_deck_cache_refresh_marker(cache_account, "usage"):
+            force_refresh = True
         if not force_refresh:
             cached_snapshot = await service._load_private_cache(
                 service._personal_deck_usage_cache,
@@ -110,7 +119,8 @@ async def _get_personal_deck_usage_snapshot(
             if cached_snapshot is not None:
                 return cast(PersonalDeckUsageSnapshot, cached_snapshot)
 
-        resolved_account, decks = await service.auth_client.list_personal_decks(account)
+        if resolved_account is None or decks is None:
+            resolved_account, decks = await service._get_authenticated_deck_list(account)
         usage_by_oracle_id: dict[str, list[PersonalDeckCardUsage]] = {}
         usage_by_name: dict[str, list[PersonalDeckCardUsage]] = {}
 
@@ -218,6 +228,7 @@ async def _get_personal_deck_usage_snapshot(
             snapshot,
             _serialize_personal_deck_usage_snapshot,
         )
+        service._clear_personal_deck_cache_refresh(resolved_account, "usage")
         return snapshot
 
 

@@ -36,11 +36,13 @@ class RuntimeSettings(BaseSettings):
     transport: TransportMode = "streamable-http"
     streamable_http_path: str = "/mcp"
     stateless_http: bool = True
+    forwarded_allow_ips: str = "127.0.0.1"
     auth_enabled: bool = False
     public_base_url: str | None = None
     auth_code_ttl_seconds: int = Field(default=600, ge=60, le=3600)
     auth_access_token_ttl_seconds: int | None = Field(default=None)
     auth_refresh_token_ttl_seconds: int | None = Field(default=None)
+    auth_persist_login_credentials: bool = True
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -70,6 +72,13 @@ class RuntimeSettings(BaseSettings):
         if value is None:
             return "archidekt-commander"
         return str(value).strip() or "archidekt-commander"
+
+    @field_validator("forwarded_allow_ips", mode="before")
+    @classmethod
+    def normalize_forwarded_allow_ips(cls, value: object) -> str:
+        if value is None:
+            return "127.0.0.1"
+        return str(value).strip() or "127.0.0.1"
 
     @field_validator("auth_access_token_ttl_seconds", "auth_refresh_token_ttl_seconds", mode="before")
     @classmethod

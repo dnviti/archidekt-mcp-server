@@ -646,7 +646,6 @@
         access_token: payload.access_token,
         refresh_token: payload.refresh_token || session.refresh_token,
         expires_at: expiresAtFromSeconds(payload.expires_in),
-        expires_at: expiresAtFromSeconds(payload.expires_in),
         scope: payload.scope || session.scope
       }};
       writeStoredSession(refreshed);
@@ -717,7 +716,12 @@
         body: JSON.stringify({{}})
       }});
       if (!response.ok) {{
-        throw new Error(await response.text());
+        const message = await response.text();
+        if (response.status === 401 || response.status === 403) {{
+          clearStoredSession();
+          throw new Error("Saved OAuth session could not renew Archidekt authentication. Reconnect Archidekt. " + message);
+        }}
+        throw new Error(message);
       }}
       return response.json();
     }}
@@ -770,7 +774,6 @@
           client_id: registeredClient.client_id,
           access_token: tokenPayload.access_token,
           refresh_token: tokenPayload.refresh_token || null,
-          expires_at: expiresAtFromSeconds(tokenPayload.expires_in),
           expires_at: expiresAtFromSeconds(tokenPayload.expires_in),
           scope: tokenPayload.scope || oauthScope
         }});
@@ -833,9 +836,17 @@
         if (!silent) {{
           console.warn("Failed to refresh OAuth status.", error);
         }}
-        authStateEl.textContent = "Saved OAuth session needs attention.";
+        const sessionStillStored = Boolean(readStoredSession());
+        disconnectButton.disabled = !sessionStillStored;
+        testLoginButton.disabled = !sessionStillStored;
+        testPersonalDecksButton.disabled = !sessionStillStored;
+        authStateEl.textContent = sessionStillStored
+          ? "Saved OAuth session needs attention."
+          : "OAuth reconnect required.";
         authStateEl.classList.remove("connected");
-        authMetaEl.textContent = "Reconnect Archidekt if authenticated API tests start failing.";
+        authMetaEl.textContent = sessionStillStored
+          ? "Reconnect Archidekt if authenticated API tests start failing."
+          : "Saved browser session was cleared because Archidekt authentication could not be renewed. Reconnect Archidekt.";
       }}
     }}
 

@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
       context: .
     port: 8000
-    size: xs
+    size: s
     min_scale: 0
     max_scale: 1
     bots: true
@@ -15,6 +15,11 @@ services:
     env:
       ARCHIDEKT_MCP_USER_AGENT: "archidekt-commander-mcp/0.2 (+mailto:dnviti@gmail.com)"
       ARCHIDEKT_MCP_LOG_LEVEL: INFO
+      ARCHIDEKT_MCP_AUTH_ENABLED: "true"
+      ARCHIDEKT_MCP_PUBLIC_BASE_URL: https://en6jessx.fn.oyd.ovh
+      ARCHIDEKT_MCP_AUTH_ACCESS_TOKEN_TTL_SECONDS: "3600"
+      ARCHIDEKT_MCP_AUTH_REFRESH_TOKEN_TTL_SECONDS: "2592000"
+      ARCHIDEKT_MCP_AUTH_PERSIST_LOGIN_CREDENTIALS: "false"
     uses: [cache]
 databases:
   cache:

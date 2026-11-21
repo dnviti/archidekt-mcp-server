@@ -43,6 +43,8 @@ class RuntimeSettings(BaseSettings):
     auth_access_token_ttl_seconds: int | None = Field(default=None)
     auth_refresh_token_ttl_seconds: int | None = Field(default=None)
     auth_persist_login_credentials: bool = True
+    # None keeps server-side CSV file export enabled only for the local stdio transport.
+    allow_file_export: bool | None = None
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -127,3 +129,9 @@ class RuntimeSettings(BaseSettings):
         if not self.public_base_url:
             return None
         return self.public_base_url.rstrip("/")
+
+    @property
+    def file_export_enabled(self) -> bool:
+        if self.allow_file_export is not None:
+            return self.allow_file_export
+        return self.transport == "stdio"

@@ -269,7 +269,8 @@ def register_mcp_tools(
             "all export pages with Archidekt's standard fields and returns a parsed preview. Set "
             "`options.include_csv_content=true` when the model needs the full CSV content in the tool "
             "response. Set `options.export_to_file=true` or provide `options.file_path` when the user asks "
-            "to export the collection as a CSV file; the response returns the written file path."
+            "to export the collection as a CSV file on the server's own filesystem (local stdio servers only "
+            "unless the operator enabled it); the response returns the written file path."
         ),
     )
     async def read_collection(

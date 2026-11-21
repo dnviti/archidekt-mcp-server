@@ -19,6 +19,7 @@ from ..schemas.collections import CollectionCardUpsert
 from ..schemas.decks import PersonalDeckCardMutation, PersonalDeckCreateInput, PersonalDeckSummary, PersonalDeckUpdateInput
 from ..schemas.search import ArchidektCardSearchFilters
 from .http_base import _ArchidektHttpClientBase, _auth_headers, _json_headers
+from ..memory_cache import prune_expired_entries
 from .request_gate import ArchidektRequestGate
 from .serialization import (
     _compact_text,
@@ -301,6 +302,7 @@ class ArchidektAuthenticatedClient(_ArchidektHttpClientBase):
         value: tuple[list[ArchidektCardReference], int | None, bool | None],
     ) -> None:
         ttl = timedelta(seconds=self.settings.archidekt_exact_name_cache_ttl_seconds)
+        prune_expired_entries(self._exact_name_search_cache)
         self._exact_name_search_cache[cache_key] = (datetime.now(UTC) + ttl, value)
 
     def _exact_name_redis_key(self, cache_key: str) -> str:

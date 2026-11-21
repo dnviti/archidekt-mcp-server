@@ -13,6 +13,7 @@ from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationParams,
     OAuthAuthorizationServerProvider,
+    TokenError,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
@@ -153,6 +154,12 @@ class RedisArchidektOAuthProvider(
         client: OAuthClientInformationFull,
         authorization_code: ArchidektAuthorizationCode,
     ) -> OAuthToken:
+        # DEL is atomic: only the first concurrent exchange of a code may mint a session.
+        if not await self.redis.delete(self._key("auth-code", authorization_code.code)):
+            raise TokenError(
+                error="invalid_grant",
+                error_description="authorization code has already been used",
+            )
         session = self._build_session(
             client_id=client.client_id or authorization_code.client_id,
             scopes=authorization_code.scopes,
@@ -164,7 +171,6 @@ class RedisArchidektOAuthProvider(
             archidekt_login_identifier_type=authorization_code.archidekt_login_identifier_type,
             archidekt_login_password=authorization_code.archidekt_login_password,
         )
-        await self.redis.delete(self._key("auth-code", authorization_code.code))
         await self._store_session(session["access"], session["refresh"], session["record"])
         return OAuthToken(
             access_token=session["access"].token,
@@ -210,11 +216,18 @@ class RedisArchidektOAuthProvider(
                         scope=" ".join(scopes),
                     )
 
+        # DEL is atomic: a refresh token can be rotated only once, even under concurrent requests.
+        if not await self.redis.delete(self._key("refresh-token", refresh_token.token)):
+            raise TokenError(
+                error="invalid_grant",
+                error_description="refresh token has already been used",
+            )
+        previous_session = await self._load_json(self._key("session", refresh_token.session_id))
         await self.revoke_token(refresh_token)
         rotated = self._build_session(
             client_id=client.client_id or refresh_token.client_id,
             scopes=scopes,
-            resource=None,
+            resource=previous_session.get("resource") if previous_session else None,
             archidekt_token=refresh_token.archidekt_token,
             archidekt_username=refresh_token.archidekt_username,
             archidekt_user_id=refresh_token.archidekt_user_id,

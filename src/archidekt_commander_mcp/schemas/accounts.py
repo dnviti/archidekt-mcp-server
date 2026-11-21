@@ -75,10 +75,19 @@ class ArchidektAccount(BaseModel):
     password: str | None = None
     user_id: int | None = Field(default=None, ge=1)
 
-    @field_validator("token", "username", "email", "password", mode="before")
+    @field_validator("token", "username", "email", mode="before")
     @classmethod
     def normalize_optional_account_fields(cls, value: object) -> str | None:
         return _normalize_optional_text(value)
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def normalize_optional_password(cls, value: object) -> str | None:
+        # Passwords may legitimately contain leading, trailing, or repeated whitespace.
+        if value is None:
+            return None
+        text = str(value)
+        return text if text.strip() else None
 
     @model_validator(mode="after")
     def validate_account(self) -> "ArchidektAccount":

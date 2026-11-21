@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..schemas.cards import ArchidektCardReference
 from ..schemas.collections import CollectionCardRecord, CollectionSnapshot
@@ -63,10 +64,12 @@ def _ensure_mapping(payload: Any, context: str) -> dict[str, Any]:
 def _normalize_next_url(raw_url: Any, base_url: str) -> str | None:
     if not raw_url:
         return None
-    value = str(raw_url).replace("http://", "https://", 1)
-    if value.startswith("/"):
-        return base_url + value
-    return value
+    # Re-anchor the pagination link on the configured Archidekt origin so the JWT
+    # sent with the follow-up request never leaves it (and plain http is never used).
+    parts = urlsplit(str(raw_url))
+    if not parts.path:
+        return None
+    return base_url + parts.path + (f"?{parts.query}" if parts.query else "")
 
 
 def _dedupe_personal_decks(decks: list[PersonalDeckSummary]) -> list[PersonalDeckSummary]:

@@ -108,7 +108,7 @@ When MCP OAuth is active, private tools may omit `account` and use the active MC
 | `upsert_collection_entries(entries, [account])` | Destructive write | List of `CollectionCardUpsert` | Creates or updates collection v2 rows |
 | `delete_collection_entries(entries, [account])` | Destructive write | List of `CollectionCardDelete` | Deletes collection rows by `record_id` |
 | `get_collection_overview(collection, [account])` | Read | `CollectionLocator` | Collection totals, owner, page count, and fetched timestamp |
-| `read_collection(collection, [options], [account])` | Non-destructive write | `CollectionReadOptions` | Reads Archidekt CSV export and can write it to a local file |
+| `read_collection(collection, [options], [account])` | Non-destructive write | `CollectionReadOptions` | Reads Archidekt CSV export; can write it to a server-side file only on `stdio` or with `ARCHIDEKT_MCP_ALLOW_FILE_EXPORT=true` |
 | `check_collection_card_availability(collection, cards, [options], [account])` | Read | Requested cards and availability options | Free-copy calculation against collection quantity minus personal deck usage |
 | `refresh_collection_cache(collection, [account])` | Non-destructive write | `CollectionLocator` | Forces snapshot refresh and returns overview |
 | `search_owned_cards(collection, [filters], [account])` | Read | `CardSearchFilters` | Deterministic search against owned collection records |
@@ -224,4 +224,4 @@ HTTP API errors from `_handle_api_request()` are mapped as:
 | Archidekt/Scryfall 401 or 403 | `401` | `Archidekt authentication needs attention. Reconnect Archidekt and try again.` |
 | Other upstream HTTP status error | `502` | `Remote HTTP error from Archidekt or Scryfall.` |
 | RuntimeError or ValueError | `400` | The exception message |
-| Unhandled exception | `500` | `Internal server error.` |
+| Unhandled exception | `500` | `Internal server error.` (details are logged server-side, never returned) |

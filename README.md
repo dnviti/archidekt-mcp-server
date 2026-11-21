@@ -117,7 +117,8 @@ that a candidate card is already committed to other personal decks.
 
 For a complete raw collection export, use `read_collection` instead of direct Archidekt API calls. It posts to
 Archidekt's `/api/collection/export/v2/{user_id}/` endpoint, follows export pages, returns a parsed preview,
-and can write the CSV locally when `options.export_to_file=true` or `options.file_path` is provided. Set
+and can write the CSV to a file on the server when `options.export_to_file=true` or `options.file_path` is provided
+(only with the `stdio` transport, or when `ARCHIDEKT_MCP_ALLOW_FILE_EXPORT=true`). Set
 `options.include_csv_content=true` only when the model needs the full CSV in the MCP tool result.
 
 For collection-only deckbuilding, use `check_collection_card_availability` before adding candidates to a deck.
@@ -224,7 +225,7 @@ Create a virtual environment and install the project:
 python -m venv .venv
 .venv\Scripts\activate
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
 Run a local Redis instance before starting the server.

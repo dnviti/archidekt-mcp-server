@@ -43,9 +43,9 @@ async def _handle_api_request(
         return _json_error(502, "Remote HTTP error from Archidekt or Scryfall.", str(error))
     except (httpx.HTTPError, RuntimeError, ValueError) as error:
         return _json_error(400, str(error))
-    except Exception as error:  # pragma: no cover
+    except Exception:  # pragma: no cover
         LOGGER.exception("Unhandled API error")
-        return _json_error(500, "Internal server error.", str(error))
+        return _json_error(500, "Internal server error.")
 
     if isinstance(result, BaseModel):
         return JSONResponse(result.model_dump(mode="json"))

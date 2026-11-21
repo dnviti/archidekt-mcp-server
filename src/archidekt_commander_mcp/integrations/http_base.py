@@ -11,6 +11,9 @@ from .request_gate import ArchidektRequestGate
 
 LOGGER = logging.getLogger("archidekt_commander_mcp.clients")
 
+# A hostile or misconfigured Retry-After must not park a request for minutes.
+MAX_RETRY_DELAY_SECONDS = 30.0
+
 
 def _auth_headers(token: str | None) -> dict[str, str]:
     if not token:
@@ -71,7 +74,7 @@ class _ArchidektHttpClientBase:
     ) -> float:
         retry_after_seconds = self._parse_retry_after_seconds(response)
         if retry_after_seconds is not None:
-            return retry_after_seconds
+            return min(retry_after_seconds, MAX_RETRY_DELAY_SECONDS)
         return float(
             min(
                 self.settings.archidekt_retry_base_delay_seconds * (2**attempt),

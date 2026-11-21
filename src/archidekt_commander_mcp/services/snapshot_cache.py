@@ -12,6 +12,7 @@ from redis.exceptions import RedisError
 
 from ..schemas.accounts import AuthenticatedAccount, CollectionLocator
 from ..schemas.decks import PersonalDeckSummary
+from ..memory_cache import prune_expired_entries, prune_idle_locks
 from .deck_usage import AuthenticatedDeckListSnapshot
 
 if TYPE_CHECKING:
@@ -24,6 +25,7 @@ PERSONAL_DECK_CACHE_REFRESH_MARKER_TTL_SECONDS = 120
 
 
 def _lock_for_key(service: DeckbuildingService, key: str) -> asyncio.Lock:
+    prune_idle_locks(service._locks)
     return service._locks.setdefault(key, asyncio.Lock())
 
 
@@ -218,12 +220,8 @@ async def _get_authenticated_deck_list(
                 cache_key,
             )
             if cached_redis is not None:
-                ttl_seconds = service.settings.personal_deck_cache_ttl_seconds
-                if ttl_seconds > 0:
-                    service._authenticated_deck_list_cache[cache_key] = (
-                        datetime.now(UTC) + timedelta(seconds=ttl_seconds),
-                        cached_redis,
-                    )
+                _store_private_memory_cache(service, service._authenticated_deck_list_cache, cache_key, cached_redis)
+                if service.settings.personal_deck_cache_ttl_seconds > 0:
                     _track_authenticated_deck_list_cache_key(service, cached_redis.account, cache_key)
                 return cached_redis.account, cached_redis.decks
             if use_memory_fallback:
@@ -242,10 +240,8 @@ async def _get_authenticated_deck_list(
             decks=_deduplicate_personal_decks(service, decks),
             fetched_at=datetime.now(UTC),
         )
-        ttl_seconds = service.settings.personal_deck_cache_ttl_seconds
-        if ttl_seconds > 0:
-            ttl = timedelta(seconds=ttl_seconds)
-            service._authenticated_deck_list_cache[cache_key] = (datetime.now(UTC) + ttl, snapshot)
+        if service.settings.personal_deck_cache_ttl_seconds > 0:
+            _store_private_memory_cache(service, service._authenticated_deck_list_cache, cache_key, snapshot)
             _track_authenticated_deck_list_cache_key(service, snapshot.account, cache_key)
             await _store_authenticated_deck_list_in_redis(service, cache_key, snapshot)
         _clear_personal_deck_cache_refresh(service, snapshot.account, "deck-list", cache_key)
@@ -404,6 +400,7 @@ def _store_private_memory_cache(
     ttl_seconds = service.settings.personal_deck_cache_ttl_seconds
     if ttl_seconds <= 0:
         return
+    prune_expired_entries(cache)
     cache[key] = (datetime.now(UTC) + timedelta(seconds=ttl_seconds), value)
 
 

@@ -10,12 +10,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 import httpx
-import redis.asyncio as redis_async
 
 from ..auth.provider import RedisArchidektOAuthProvider
 from ..config import RuntimeSettings
 from ..filtering import normalize_text
 from ..integrations.authenticated import ArchidektAuthenticatedClient
+from ..integrations.redis_client import create_redis_client
 from ..integrations.collection_cache import CollectionCache
 from ..integrations.public_collection import ArchidektPublicCollectionClient
 from ..integrations.scryfall import ScryfallClient
@@ -77,7 +77,7 @@ class DeckbuildingService:
             timeout=httpx.Timeout(settings.http_timeout_seconds),
             headers={"User-Agent": settings.user_agent},
         )
-        self.redis_client = redis_async.from_url(settings.redis_url, decode_responses=True)
+        self.redis_client = create_redis_client(settings.redis_url)
         self.oauth_provider = (
             RedisArchidektOAuthProvider(
                 self.redis_client,
@@ -472,21 +472,24 @@ class DeckbuildingService:
         resolved_account = await self._ensure_account_identity(await self._coerce_account(account))
         results: list[CollectionCardUpsertResult] = []
         affected_games: set[int] = set()
-        for entry in entries:
-            payload = await self.auth_client.upsert_collection_entry(resolved_account, entry)
-            results.append(
-                CollectionCardUpsertResult(
-                    operation="updated" if entry.record_id is not None else "created",
-                    record_id=_safe_int(payload.get("id") or payload.get("recordId")) or entry.record_id,
-                    card_id=entry.card_id,
-                    game=entry.game,
-                    result=payload,
+        try:
+            for entry in entries:
+                # Track the game before the call: a failed or timed-out write may still have landed.
+                affected_games.add(entry.game)
+                payload = await self.auth_client.upsert_collection_entry(resolved_account, entry)
+                results.append(
+                    CollectionCardUpsertResult(
+                        operation="updated" if entry.record_id is not None else "created",
+                        record_id=_safe_int(payload.get("id") or payload.get("recordId")) or entry.record_id,
+                        card_id=entry.card_id,
+                        game=entry.game,
+                        result=payload,
+                    )
                 )
-            )
-            affected_games.add(entry.game)
-
-        await self._invalidate_collection_caches(resolved_account, affected_games)
-        await self._mark_recent_collection_write(resolved_account, affected_games)
+        finally:
+            if affected_games:
+                await self._invalidate_collection_caches(resolved_account, affected_games)
+                await self._mark_recent_collection_write(resolved_account, affected_games)
         return CollectionMutationResponse(
             action="upsert",
             account_username=resolved_account.username,
@@ -507,11 +510,12 @@ class DeckbuildingService:
     ) -> CollectionMutationResponse:
         resolved_account = await self._ensure_account_identity(await self._coerce_account(account))
         record_ids = [entry.record_id for entry in entries]
-        payload = await self.auth_client.delete_collection_entries(resolved_account, record_ids)
         affected_games = {entry.game for entry in entries if entry.game is not None} or {1, 2, 3}
-
-        await self._invalidate_collection_caches(resolved_account, affected_games)
-        await self._mark_recent_collection_write(resolved_account, affected_games)
+        try:
+            payload = await self.auth_client.delete_collection_entries(resolved_account, record_ids)
+        finally:
+            await self._invalidate_collection_caches(resolved_account, affected_games)
+            await self._mark_recent_collection_write(resolved_account, affected_games)
         return CollectionMutationResponse(
             action="delete",
             account_username=resolved_account.username,
@@ -547,6 +551,11 @@ class DeckbuildingService:
         account: ArchidektAccount | None = None,
     ) -> CollectionReadResponse:
         read_options = options or CollectionReadOptions()
+        if read_options.export_to_file and not self.settings.file_export_enabled:
+            raise ValueError(
+                "Writing the collection export to a server-side file is disabled on this deployment. "
+                "Set `options.include_csv_content=true` to receive the full CSV in the response instead."
+            )
         resolved_account = await self._resolve_optional_account(account)
         document = await self.archidekt_client.fetch_collection_export(
             collection,

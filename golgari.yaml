@@ -1,0 +1,24 @@
+version: v1
+app: archidekt
+namespace: default
+services:
+  archidekt:
+    build:
+      dockerfile: Dockerfile
+      context: .
+    port: 8000
+    size: xs
+    min_scale: 0
+    max_scale: 1
+    bots: true
+    health_path: /health
+    env:
+      ARCHIDEKT_MCP_USER_AGENT: "archidekt-commander-mcp/0.2 (+mailto:dnviti@gmail.com)"
+      ARCHIDEKT_MCP_LOG_LEVEL: INFO
+    uses: [cache]
+databases:
+  cache:
+    engine: redis
+    size: xs
+    volume_gb: 1
+    env_prefix: ARCHIDEKT_MCP_REDIS

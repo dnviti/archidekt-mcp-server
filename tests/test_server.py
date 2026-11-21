@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 from mcp.server.auth.middleware.auth_context import auth_context_var
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
-from mcp.server.auth.provider import AuthorizationParams
+from mcp.server.auth.provider import AuthorizationParams, TokenError
 from mcp.shared.auth import OAuthClientInformationFull
 from pydantic import ValidationError
 import httpx
@@ -24,6 +24,12 @@ from starlette.testclient import TestClient
 from archidekt_commander_mcp.clients import ArchidektAuthenticatedClient, ArchidektRequestGate, CollectionCache, ScryfallClient
 from archidekt_commander_mcp.integrations.public_collection import ArchidektPublicCollectionClient
 from archidekt_commander_mcp.config import RuntimeSettings
+from archidekt_commander_mcp.integrations.serialization import _normalize_next_url
+from archidekt_commander_mcp.memory_cache import (
+    MEMORY_CACHE_PRUNE_THRESHOLD,
+    prune_expired_entries,
+    prune_idle_locks,
+)
 from archidekt_commander_mcp.mcp_auth import (
     AUTH_SCOPE,
     ArchidektAccessToken,
@@ -454,7 +460,7 @@ class ApiErrorMappingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.json()["error"], "Internal server error.")
-        self.assertEqual(response.json()["details"], "unexpected boom")
+        self.assertNotIn("details", response.json())
 
 
 class RuntimeCliContractTests(unittest.TestCase):
@@ -641,6 +647,68 @@ class WebUiTests(unittest.TestCase):
 
 
 class OAuthProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_authorization_code_and_rotated_refresh_token_are_single_use(self) -> None:
+        redis_client = FakeRedis()
+        provider = RedisArchidektOAuthProvider(
+            redis_client,
+            key_prefix="archidekt-commander",
+            issuer_url="https://mcp.example",
+            access_token_ttl_seconds=3600,
+            refresh_token_ttl_seconds=86400,
+        )
+        client = OAuthClientInformationFull(
+            client_id="client-1",
+            redirect_uris=["https://chat.openai.com/a/oauth/callback"],
+            token_endpoint_auth_method="none",
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+            scope=AUTH_SCOPE,
+        )
+        await provider.register_client(client)
+        redirect_to_form = await provider.authorize(
+            client,
+            AuthorizationParams(
+                state=None,
+                scopes=[AUTH_SCOPE],
+                code_challenge="pkce-challenge",
+                redirect_uri="https://chat.openai.com/a/oauth/callback",
+                redirect_uri_provided_explicitly=True,
+                resource="https://mcp.example/mcp",
+            ),
+        )
+        request_id = parse_qs(urlparse(redirect_to_form).query)["request_id"][0]
+        redirect_back = await provider.complete_authorization(
+            request_id,
+            AuthenticatedAccount(token="arch-token", username="tester", user_id=123),
+        )
+        code = parse_qs(urlparse(redirect_back).query)["code"][0]
+        loaded_code = await provider.load_authorization_code(client, code)
+        assert loaded_code is not None
+
+        token = await provider.exchange_authorization_code(client, loaded_code)
+        with self.assertRaises(TokenError) as code_reuse:
+            await provider.exchange_authorization_code(client, loaded_code)
+        self.assertEqual(code_reuse.exception.error, "invalid_grant")
+
+        refresh = await provider.load_refresh_token(client, token.refresh_token or "")
+        assert refresh is not None
+        rotated = await provider.exchange_refresh_token(client, refresh, [AUTH_SCOPE])
+        with self.assertRaises(TokenError) as refresh_reuse:
+            await provider.exchange_refresh_token(client, refresh, [AUTH_SCOPE])
+        self.assertEqual(refresh_reuse.exception.error, "invalid_grant")
+
+        rotated_access = await provider.load_access_token(rotated.access_token)
+        assert rotated_access is not None
+        self.assertEqual(rotated_access.resource, "https://mcp.example/mcp")
+        self.assertIsNone(await provider.load_access_token(token.access_token))
+
+    def test_account_password_keeps_whitespace_verbatim(self) -> None:
+        account = ArchidektAccount(username=" tester ", password="  two  spaces ")
+        self.assertEqual(account.username, "tester")
+        self.assertEqual(account.password, "  two  spaces ")
+        with self.assertRaises(ValidationError):
+            ArchidektAccount(username="tester", password="   ")
+
     async def test_default_oauth_sessions_do_not_expire(self) -> None:
         redis_client = FakeRedis()
         provider = RedisArchidektOAuthProvider(
@@ -1353,7 +1421,7 @@ class CollectionReadExportTests(unittest.IsolatedAsyncioTestCase):
                 request=request,
             )
 
-        service = DeckbuildingService(RuntimeSettings())
+        service = DeckbuildingService(RuntimeSettings(transport="stdio"))
         original_http_client = service.http_client
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
             service.http_client = http_client
@@ -1387,6 +1455,30 @@ class CollectionReadExportTests(unittest.IsolatedAsyncioTestCase):
                         exported_file.read(),
                         "Quantity,Name,Edition Code\r\n1,Sol Ring,clb\r\n",
                     )
+        await original_http_client.aclose()
+        await service.redis_client.aclose()
+
+    async def test_read_collection_refuses_server_file_export_over_http_transport(self) -> None:
+        requests: list[httpx.Request] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(500, request=request)
+
+        service = DeckbuildingService(RuntimeSettings(transport="streamable-http"))
+        original_http_client = service.http_client
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            service.archidekt_client = ArchidektPublicCollectionClient(http_client, service.settings)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                file_path = os.path.join(tmpdir, "collection.csv")
+                with self.assertRaisesRegex(ValueError, "server-side file is disabled"):
+                    await service.read_collection(
+                        CollectionLocator(collection_id=809591),
+                        CollectionReadOptions(file_path=file_path),
+                    )
+                self.assertFalse(os.path.exists(file_path))
+        self.assertEqual(requests, [])
+        self.assertTrue(RuntimeSettings(transport="streamable-http", allow_file_export=True).file_export_enabled)
         await original_http_client.aclose()
         await service.redis_client.aclose()
 
@@ -2201,6 +2293,66 @@ class AuthenticatedResourceTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await service.http_client.aclose()
 
+    async def test_partially_failed_collection_upsert_still_invalidates_caches(self) -> None:
+        snapshot = CollectionSnapshot(
+            collection_id=321,
+            owner_id=321,
+            owner_username="private-user",
+            game=1,
+            page_size=100,
+            total_pages=1,
+            total_records=1,
+            fetched_at=datetime.now(UTC),
+            source_url="https://archidekt.com/collection/v2/321",
+            records=[],
+        )
+
+        class FailingSecondUpsertClient(FakeAuthMutationClient):
+            async def upsert_collection_entry(
+                self,
+                account: AuthenticatedAccount,
+                entry: CollectionCardUpsert,
+            ) -> dict[str, object]:
+                if self.upsert_calls:
+                    request = httpx.Request("POST", "https://archidekt.com/api/collection/v2/")
+                    raise httpx.ReadTimeout("timed out", request=request)
+                return await super().upsert_collection_entry(account, entry)
+
+        redis_client = FakeRedis()
+        account = AuthenticatedAccount(token="secret")
+        resolved_account = AuthenticatedAccount(token="secret", username="private-user", user_id=321)
+        private_locator = CollectionLocator(collection_id=321)
+
+        service = DeckbuildingService(RuntimeSettings())
+        original_redis = service.redis_client
+        service.redis_client = redis_client
+        service.cache.redis = redis_client
+        service.archidekt_client = FakeCollectionClient(snapshot)
+        service.cache.client = service.archidekt_client
+        service.auth_client = FailingSecondUpsertClient()
+        await original_redis.aclose()
+        try:
+            await service.get_snapshot(private_locator, account=account)
+            private_key = service._private_redis_key(
+                "collection",
+                service._private_snapshot_cache_key(private_locator, resolved_account),
+            )
+            self.assertIn(private_key, redis_client.storage)
+
+            with self.assertRaises(httpx.ReadTimeout):
+                await service.upsert_collection_entries(
+                    entries=[
+                        CollectionCardUpsert(card_id=150824, quantity=1, game=1),
+                        CollectionCardUpsert(card_id=150825, quantity=1, game=1),
+                    ],
+                    account=account,
+                )
+
+            self.assertNotIn(private_key, redis_client.storage)
+            self.assertTrue(await service._consume_recent_collection_write(private_locator, resolved_account))
+        finally:
+            await service.http_client.aclose()
+
     async def test_delete_collection_entries_invalidates_public_and_private_caches(self) -> None:
         snapshot = CollectionSnapshot(
             collection_id=321,
@@ -2616,6 +2768,8 @@ class OAuthHttpRouteTests(unittest.TestCase):
 
             login_page_response = client.get(auth_login_url)
             self.assertEqual(login_page_response.status_code, 200)
+            self.assertEqual(login_page_response.headers["cache-control"], "no-store")
+            self.assertEqual(login_page_response.headers["x-frame-options"], "DENY")
             self.assertIn("Connect Archidekt", login_page_response.text)
 
             request_id = parse_qs(urlparse(auth_login_url).query)["request_id"][0]
@@ -2713,6 +2867,41 @@ class ArchidektRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_count, 3)
         self.assertEqual(len(sleep_durations), 2)
         self.assertAlmostEqual(sleep_durations[0], 2.5, places=1)
+
+    def test_retry_after_is_capped_and_next_url_stays_on_archidekt(self) -> None:
+        settings = RuntimeSettings()
+        client = ArchidektAuthenticatedClient(httpx.AsyncClient(), settings)
+        response = httpx.Response(429, headers={"Retry-After": "86400"})
+        self.assertEqual(client._archidekt_retry_delay_seconds(response, 0), 30.0)
+
+        base_url = settings.normalized_archidekt_base_url
+        self.assertEqual(
+            _normalize_next_url("https://evil.example/api/decks/v3/?page=2", base_url),
+            f"{base_url}/api/decks/v3/?page=2",
+        )
+        self.assertEqual(
+            _normalize_next_url("http://archidekt.com/api/decks/v3/?page=3", base_url),
+            f"{base_url}/api/decks/v3/?page=3",
+        )
+        self.assertEqual(_normalize_next_url("/api/decks/v3/", base_url), f"{base_url}/api/decks/v3/")
+        self.assertIsNone(_normalize_next_url(None, base_url))
+
+    def test_memory_cache_pruning_drops_expired_entries_and_idle_locks(self) -> None:
+        now = datetime.now(UTC)
+        cache: dict[str, tuple[datetime, Any]] = {
+            f"expired-{index}": (now - timedelta(seconds=1), index)
+            for index in range(MEMORY_CACHE_PRUNE_THRESHOLD)
+        }
+        cache["live"] = (now + timedelta(minutes=5), "keep")
+        prune_expired_entries(cache)
+        self.assertEqual(list(cache), ["live"])
+
+        locks = {f"lock-{index}": asyncio.Lock() for index in range(MEMORY_CACHE_PRUNE_THRESHOLD)}
+        held = asyncio.Lock()
+        held._locked = True  # simulate a lock currently held by another task
+        locks["held"] = held
+        prune_idle_locks(locks)
+        self.assertEqual(list(locks), ["held"])
 
     async def test_retries_with_exponential_backoff_without_retry_after(self) -> None:
         sleep_durations: list[float] = []

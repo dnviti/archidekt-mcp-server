@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import cast
 
@@ -15,8 +16,36 @@ from ..auth.pages import render_archidekt_authorize_page
 from ..auth.provider import AUTH_SCOPE, RedisArchidektOAuthProvider
 from ..config import RuntimeSettings
 from ..integrations.authenticated import ArchidektAuthenticatedClient
+from ..integrations.redis_client import create_redis_client
 from ..schemas.accounts import ArchidektAccount
 from .http_helpers import _compact_optional_text
+
+LOGGER = logging.getLogger(__name__)
+
+# The login page collects an Archidekt password: never cache it, never let another
+# site frame it, and never leak the request id through the Referer header.
+_LOGIN_PAGE_HEADERS = {
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+}
+
+
+def _login_page_response(content: str, status_code: int = 200) -> HTMLResponse:
+    return HTMLResponse(content, status_code=status_code, headers=_LOGIN_PAGE_HEADERS)
+
+
+def _login_failure_message(error: Exception) -> str:
+    if isinstance(error, httpx.HTTPStatusError):
+        if error.response.status_code in {400, 401, 403}:
+            return "Archidekt rejected the username/email or password."
+        return f"Archidekt login failed with HTTP {error.response.status_code}. Try again in a moment."
+    if isinstance(error, httpx.HTTPError):
+        return "Archidekt could not be reached. Try again in a moment."
+    if isinstance(error, RuntimeError):
+        return str(error)
+    return "The login could not be completed because of a server error. Try again in a moment."
 
 
 @dataclass(slots=True)
@@ -37,7 +66,7 @@ def build_auth_components(runtime: RuntimeSettings) -> ServerAuthComponents:
     if runtime.normalized_public_base_url is None:
         raise ValueError("`public_base_url` is required when MCP auth is enabled.")
 
-    redis_client = redis_async.from_url(runtime.redis_url, decode_responses=True)
+    redis_client = create_redis_client(runtime.redis_url)
     provider = RedisArchidektOAuthProvider(
         redis_client,
         key_prefix=runtime.redis_key_prefix,
@@ -60,6 +89,8 @@ def build_auth_components(runtime: RuntimeSettings) -> ServerAuthComponents:
         ),
         revocation_options=RevocationOptions(enabled=True),
         required_scopes=[AUTH_SCOPE],
+        # Tokens are only minted by this server for this single MCP resource.
+        validate_token_resource=False,
     )
     return ServerAuthComponents(
         redis_client=redis_client,
@@ -81,63 +112,52 @@ def register_archidekt_auth_routes(
         if request.method == "GET":
             request_id = _compact_optional_text(request.query_params.get("request_id"))
             if request_id is None:
-                return HTMLResponse(
-                    render_archidekt_authorize_page(
-                        request_id="",
-                        error_message="The MCP authorization request is missing a request id.",
-                        persist_login_credentials=runtime.auth_persist_login_credentials,
-                    ),
-                    status_code=400,
-                )
-            pending = await auth_provider.get_pending_request(request_id)
-            if pending is None:
-                return HTMLResponse(
-                    render_archidekt_authorize_page(
-                        request_id=request_id,
-                        error_message="This MCP authorization request is missing or has expired. Start the app connection again from ChatGPT.",
-                        persist_login_credentials=runtime.auth_persist_login_credentials,
-                    ),
-                    status_code=400,
-                )
-            return HTMLResponse(
-                render_archidekt_authorize_page(
-                    request_id=request_id,
-                    persist_login_credentials=runtime.auth_persist_login_credentials,
-                )
-            )
-
-        form = await request.form()
-        request_id = _compact_optional_text(form.get("request_id"))
-        identifier = _compact_optional_text(form.get("identifier"))
-        password = _compact_optional_text(form.get("password"))
-        if request_id is None:
-            return HTMLResponse(
-                render_archidekt_authorize_page(
+                return _login_page_response(render_archidekt_authorize_page(
                     request_id="",
                     error_message="The MCP authorization request is missing a request id.",
                     persist_login_credentials=runtime.auth_persist_login_credentials,
                 ),
-                status_code=400,
-            )
-        if not identifier or not password:
-            return HTMLResponse(
-                render_archidekt_authorize_page(
-                    request_id=request_id,
-                    error_message="Archidekt username/email and password are both required.",
-                    persist_login_credentials=runtime.auth_persist_login_credentials,
-                ),
-                status_code=400,
-            )
-        pending = await auth_provider.get_pending_request(request_id)
-        if pending is None:
-            return HTMLResponse(
-                render_archidekt_authorize_page(
+                status_code=400,)
+            pending = await auth_provider.get_pending_request(request_id)
+            if pending is None:
+                return _login_page_response(render_archidekt_authorize_page(
                     request_id=request_id,
                     error_message="This MCP authorization request is missing or has expired. Start the app connection again from ChatGPT.",
                     persist_login_credentials=runtime.auth_persist_login_credentials,
                 ),
-                status_code=400,
-            )
+                status_code=400,)
+            return _login_page_response(render_archidekt_authorize_page(
+                request_id=request_id,
+                persist_login_credentials=runtime.auth_persist_login_credentials,
+            ))
+
+        form = await request.form()
+        request_id = _compact_optional_text(form.get("request_id"))
+        identifier = _compact_optional_text(form.get("identifier"))
+        raw_password = form.get("password")
+        password = raw_password if isinstance(raw_password, str) and raw_password.strip() else None
+        if request_id is None:
+            return _login_page_response(render_archidekt_authorize_page(
+                request_id="",
+                error_message="The MCP authorization request is missing a request id.",
+                persist_login_credentials=runtime.auth_persist_login_credentials,
+            ),
+            status_code=400,)
+        if not identifier or not password:
+            return _login_page_response(render_archidekt_authorize_page(
+                request_id=request_id,
+                error_message="Archidekt username/email and password are both required.",
+                persist_login_credentials=runtime.auth_persist_login_credentials,
+            ),
+            status_code=400,)
+        pending = await auth_provider.get_pending_request(request_id)
+        if pending is None:
+            return _login_page_response(render_archidekt_authorize_page(
+                request_id=request_id,
+                error_message="This MCP authorization request is missing or has expired. Start the app connection again from ChatGPT.",
+                persist_login_credentials=runtime.auth_persist_login_credentials,
+            ),
+            status_code=400,)
 
         login_account = (
             ArchidektAccount(email=identifier, password=password)
@@ -157,13 +177,13 @@ def register_archidekt_auth_routes(
                 login_account=login_account if runtime.auth_persist_login_credentials else None,
             )
         except Exception as error:
-            return HTMLResponse(
-                render_archidekt_authorize_page(
-                    request_id=request_id,
-                    error_message=f"Archidekt login failed: {error}",
-                    persist_login_credentials=runtime.auth_persist_login_credentials,
-                ),
-                status_code=400,
-            )
+            if not isinstance(error, (httpx.HTTPError, RuntimeError)):
+                LOGGER.exception("Archidekt OAuth login failed")
+            return _login_page_response(render_archidekt_authorize_page(
+                request_id=request_id,
+                error_message=f"Archidekt login failed: {_login_failure_message(error)}",
+                persist_login_credentials=runtime.auth_persist_login_credentials,
+            ),
+            status_code=400,)
 
         return RedirectResponse(redirect_url, status_code=302)

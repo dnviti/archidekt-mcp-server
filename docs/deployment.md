@@ -26,14 +26,18 @@ The production path is a Python application container plus Redis. The server pro
 
 ## 🐳 Docker Image
 
-`Dockerfile` and `Containerfile` are equivalent and use:
+`Dockerfile` and `Containerfile` are identical multi-stage builds:
 
-- Base image: `python:3.13-slim`
-- Workdir: `/app`
-- Runtime user: `appuser`
+- Base image: `python:3.13-slim`, pinned by digest through the `PYTHON_IMAGE` build argument
+- Builder stage: installs the package into `/opt/venv`; the runtime stage copies only that venv
+- Workdir: `/app` (empty; the app writes nothing to disk in HTTP mode, so a read-only root filesystem works)
+- Runtime user: numeric UID/GID `10001:10001`
 - Exposed port: `8000`
-- Health check: `GET http://127.0.0.1:8000/health`
+- Health check: `GET http://127.0.0.1:8000/health` (optional `HEALTHCHECK`; Kubernetes/Knative use their own probes)
 - Command: `python -m archidekt_commander_mcp.server`
+
+To move to a newer base image, read the current digest from the registry and pass it with
+`--build-arg PYTHON_IMAGE=python:3.13-slim@sha256:<digest>` or update the default in both files.
 
 Build:
 
@@ -114,9 +118,21 @@ When deployed behind a reverse proxy:
 1. Set `ARCHIDEKT_MCP_PUBLIC_BASE_URL` to the public base URL if OAuth is enabled.
 2. Keep the MCP endpoint at `ARCHIDEKT_MCP_STREAMABLE_HTTP_PATH`, default `/mcp`.
 3. Configure the proxy to pass `X-Forwarded-For` or `X-Real-IP`.
-4. Set `ARCHIDEKT_MCP_FORWARDED_ALLOW_IPS` to the trusted proxy IP or CIDR.
+4. Set `ARCHIDEKT_MCP_FORWARDED_ALLOW_IPS` to the trusted proxy IP or CIDR. The default `127.0.0.1` already matches sidecar proxies such as the Knative queue-proxy, which forward from loopback.
 
 Avoid `ARCHIDEKT_MCP_FORWARDED_ALLOW_IPS=*` on an exposed app unless every direct connection is forced through trusted proxy infrastructure.
+
+OAuth issuer, metadata, and login URLs are built from `ARCHIDEKT_MCP_PUBLIC_BASE_URL`, not from request headers, so they stay `https://` behind a TLS-terminating proxy even if forwarded headers are dropped.
+
+## ☁ Serverless (Scale-To-Zero) Notes
+
+The image runs unchanged on Knative-style platforms (ephemeral filesystem, several replicas, scale to zero):
+
+- Keep `ARCHIDEKT_MCP_STATELESS_HTTP=true` (default) so any replica can serve any MCP request.
+- Point `ARCHIDEKT_MCP_REDIS_URL` at a shared Redis. All OAuth state (clients, pending logins, codes, tokens, sessions) lives there; without it OAuth cannot work and every replica re-fetches collections.
+- When Redis is unreachable, non-OAuth reads keep working: Redis calls time out after a few seconds and the server falls back to in-memory caches or direct upstream fetches.
+- The Archidekt request gate (`ARCHIDEKT_MCP_ARCHIDEKT_RATE_LIMIT_*`) is per replica; divide the budget by the expected replica count.
+- Server-side CSV export files (`read_collection` with `options.export_to_file`/`options.file_path`) are refused unless `ARCHIDEKT_MCP_ALLOW_FILE_EXPORT=true`; use `options.include_csv_content=true` instead.
 
 ## 🔐 OAuth Deployment Checklist
 

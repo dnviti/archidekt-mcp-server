@@ -7,6 +7,7 @@ import logging
 import re
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 from ..filtering import build_type_line, normalize_color_symbols
 from ..schemas.accounts import CollectionLocator
@@ -46,7 +47,7 @@ class ArchidektPublicCollectionClient(_ArchidektHttpClientBase):
         )
         response = await self._request_archidekt(
             "GET",
-            f"{self.settings.normalized_archidekt_base_url}/u/{collection.username}",
+            f"{self.settings.normalized_archidekt_base_url}/u/{quote(collection.username, safe='')}",
         )
         response.raise_for_status()
 

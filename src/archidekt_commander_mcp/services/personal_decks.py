@@ -121,11 +121,14 @@ class PersonalDeckWorkflow:
         account: ArchidektAccount | None = None,
     ) -> PersonalDeckMutationResponse:
         resolved_account = await self._service._coerce_account(account)
-        payload, summary = await self._service.auth_client.create_deck(resolved_account, deck)
+        try:
+            payload, summary = await self._service.auth_client.create_deck(resolved_account, deck)
+        finally:
+            # A failed or timed-out write may still have changed the Personal Deck List.
+            await self._service._invalidate_personal_deck_caches(resolved_account)
         deck_id = (summary.id if summary else None) or _extract_deck_id(payload)
         if deck_id is None:
             raise RuntimeError("Archidekt deck create succeeded but did not return a deck id.")
-        await self._service._invalidate_personal_deck_caches(resolved_account)
         return PersonalDeckMutationResponse(
             action="created",
             deck_id=deck_id,
@@ -147,8 +150,10 @@ class PersonalDeckWorkflow:
         account: ArchidektAccount | None = None,
     ) -> PersonalDeckMutationResponse:
         resolved_account = await self._service._coerce_account(account)
-        payload, summary = await self._service.auth_client.update_deck(resolved_account, deck_id, deck)
-        await self._service._invalidate_personal_deck_caches(resolved_account)
+        try:
+            payload, summary = await self._service.auth_client.update_deck(resolved_account, deck_id, deck)
+        finally:
+            await self._service._invalidate_personal_deck_caches(resolved_account)
         return PersonalDeckMutationResponse(
             action="updated",
             deck_id=deck_id,
@@ -166,8 +171,10 @@ class PersonalDeckWorkflow:
         account: ArchidektAccount | None = None,
     ) -> PersonalDeckMutationResponse:
         resolved_account = await self._service._coerce_account(account)
-        await self._service.auth_client.delete_deck(resolved_account, deck_id)
-        await self._service._invalidate_personal_deck_caches(resolved_account)
+        try:
+            await self._service.auth_client.delete_deck(resolved_account, deck_id)
+        finally:
+            await self._service._invalidate_personal_deck_caches(resolved_account)
         return PersonalDeckMutationResponse(
             action="deleted",
             deck_id=deck_id,
@@ -190,8 +197,10 @@ class PersonalDeckWorkflow:
             cards=cards,
             account=resolved_account,
         )
-        payload = await self._service.auth_client.modify_deck_cards(resolved_account, deck_id, cards)
-        await self._service._invalidate_personal_deck_caches(resolved_account)
+        try:
+            payload = await self._service.auth_client.modify_deck_cards(resolved_account, deck_id, cards)
+        finally:
+            await self._service._invalidate_personal_deck_caches(resolved_account)
         successful_count = _safe_int(payload.get("successful_count")) if isinstance(payload, dict) else None
         failed_count = _safe_int(payload.get("failed_count")) if isinstance(payload, dict) else None
         affected_count = successful_count if successful_count is not None else len(cards)

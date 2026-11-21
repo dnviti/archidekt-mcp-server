@@ -41,6 +41,7 @@ CLI flags in `src/archidekt_commander_mcp/runtime_cli.py` override selected sett
 | `ARCHIDEKT_MCP_STATELESS_HTTP` | `true` | Boolean | FastMCP stateless HTTP mode |
 | `ARCHIDEKT_MCP_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` | Python logging level |
 | `ARCHIDEKT_MCP_USER_AGENT` | `archidekt-commander-mcp/0.2 (+mailto:replace-me@example.com)` | String | User-Agent sent to Archidekt and Scryfall |
+| `ARCHIDEKT_MCP_ALLOW_FILE_EXPORT` | unset (enabled only for `stdio`) | Boolean | Lets `read_collection` write CSV files on the server filesystem; keep unset or `false` on any HTTP deployment |
 
 Set a real contact in `ARCHIDEKT_MCP_USER_AGENT` when exposing the server publicly.
 

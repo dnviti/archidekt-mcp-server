@@ -346,6 +346,9 @@ Published image:
 
 - `ghcr.io/dnviti/archidekt-mcp-server:latest`
 
+On Forgejo, `.forgejo/workflows/ci.yml` runs only the test job; the image is built by Golgari `app_build`
+(see `docs/deployment.md`).
+
 ## MCP Client Configuration
 
 Example Codex MCP configuration:

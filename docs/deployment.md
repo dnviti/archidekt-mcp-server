@@ -184,6 +184,10 @@ Published image:
 ghcr.io/dnviti/archidekt-mcp-server:latest
 ```
 
+### Forgejo (git.commandware.com)
+
+Forgejo runs `.forgejo/workflows/ci.yml` and ignores `.github/workflows/` while that folder exists. The workflow has only the test job (ruff, mypy, unittest on Python 3.13) and runs on pushes to `main` and `agente/**`, pull requests targeting `main`, and manual dispatch. Golgari managed runners have no Docker inside jobs, so the image is not built there: build it with Golgari `app_build` (service `archidekt` in `golgari.yaml`), then `app_plan` / `app_apply`.
+
 ## ✔ Production Smoke Checks
 
 Check health:
